@@ -53,9 +53,19 @@ public final class ModuleHook extends XposedModule {
         if(info.getLongVersionCode()!=73932L||!"7.3.9.32".equals(info.versionName)) {
             logMessage("Unsupported version; no adaptation installed.");return;
         }
-        SharedPreferences prefs=getRemotePreferences(Rules.PREFS);
-        for(Map.Entry<String,?> entry:prefs.getAll().entrySet())
-            if(PrivacyRules.settingKey(entry.getKey())&&entry.getValue() instanceof Boolean)flags.put(entry.getKey(),(Boolean)entry.getValue());
+        Map<String,Boolean> remoteFlags=new HashMap<>();
+        try {
+            SharedPreferences prefs=getRemotePreferences(Rules.PREFS);
+            if(prefs!=null)for(Map.Entry<String,?> entry:prefs.getAll().entrySet())
+                if(PrivacyRules.settingKey(entry.getKey())&&entry.getValue() instanceof Boolean)
+                    remoteFlags.put(entry.getKey(),(Boolean)entry.getValue());
+        }catch(Throwable error){logMessage("Remote preferences unavailable: "+PrivacyRules.errorType(error));}
+        if(!remoteFlags.isEmpty())flags.putAll(remoteFlags);
+        else {
+            Map<String,Boolean> fileFlags=EmbeddedPrefs.read();
+            if(fileFlags!=null){flags.putAll(fileFlags);logMessage("Settings loaded from shared file (embedded framework fallback).");}
+        }
+        requestSettings(context);
         lifecycle=new Lifecycle();app.registerActivityLifecycleCallbacks(lifecycle);
         books=new BookTools(this,new BookTools.Host(){public boolean on(String key){return ModuleHook.this.on(key);}public void log(String message){logOnce(message);}},context.getClassLoader());
         if(!on("enabled")){logMessage("5.0.5 loaded with customizations disabled; in-app book tools entry follows its own switch.");return;}
@@ -85,6 +95,27 @@ public final class ModuleHook extends XposedModule {
         nativeUi.countSink=features::recordCount;nativeUi.install();
         if(on("local_vip"))installVip(context.getClassLoader());
         logMessage("5.0.5 modern API 102 loaded for 7.3.9.32.");
+    }
+
+    /** Optional fallback: ask the settings app for the latest switches. No-op on LSPosed. */
+    private void requestSettings(Context context) {
+        try {
+            Intent request=new Intent(SettingsResponder.ACTION);
+            request.setPackage(Rules.PACKAGE);
+            request.setClassName(Rules.PACKAGE, Rules.PACKAGE+".SettingsResponder");
+            context.sendOrderedBroadcast(request,null,new BroadcastReceiver(){
+                @Override public void onReceive(Context c,Intent i){
+                    Bundle extras=getResultExtras(true);
+                    if(extras==null)return;
+                    Map<String,Boolean> received=new HashMap<>();
+                    for(String key:extras.keySet())if(PrivacyRules.settingKey(key))received.put(key,extras.getBoolean(key));
+                    if(received.isEmpty())return;
+                    flags.clear();flags.putAll(received);
+                    EmbeddedPrefs.writeHost(received);
+                    logMessage("Settings received from settings app: "+received.size());
+                }
+            },null,Activity.RESULT_OK,null,null);
+        }catch(Throwable error){logMessage("Settings request skipped: "+PrivacyRules.errorType(error));}
     }
 
     private boolean on(String key){return flags.containsKey(key)?Boolean.TRUE.equals(flags.get(key)):Rules.defaultOn(key);}
