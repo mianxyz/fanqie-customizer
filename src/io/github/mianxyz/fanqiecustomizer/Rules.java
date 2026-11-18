@@ -11,7 +11,7 @@ public final class Rules {
         "enabled","in_app_entry","debug","trace_ab","local_vip",
         "hide_welfare_float","hide_post_float","hide_drama_resume","auto_expand_shelf","hide_coin",
         "hide_reader_video_entry","hide_reader_audio",
-        "hide_banner","hide_reader_ads","hide_reader_live_popup","hide_games",
+        "hide_banner","hide_reader_ads","hide_reader_live_popup","hide_short_drama_ad","hide_games",
         "hide_income","hide_frequent_games","show_book_id","book_id_search",
         "force_open_removed","raw_read_counts","hide_update_popup"
     };

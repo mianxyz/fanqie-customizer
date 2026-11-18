@@ -16,6 +16,8 @@ public final class PrivacyRulesTest {
         }
         check(PrivacyRules.knownConfigName("reader_hiden_audio_btn_v561"),"verified config remains traceable");
         check(PrivacyRules.settingKey("hide_update_popup"),"new switch synchronizes");
+        check(PrivacyRules.settingKey("hide_short_drama_ad"),"short-drama ad switch synchronizes");
+        check(!Rules.defaultOn("hide_short_drama_ad"),"short-drama ad suppression defaults off");
         for(String[] keys:new String[][]{Rules.TAB_KEYS,Rules.CHANNEL_KEYS,Rules.MINE_KEYS})
             for(String key:keys)check(PrivacyRules.settingKey(key),"existing grouped switch synchronizes");
         check(!Rules.defaultOn("hide_update_popup"),"update suppression defaults off");

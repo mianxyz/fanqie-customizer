@@ -28,6 +28,7 @@ public final class ModuleHook extends XposedModule {
     private Lifecycle lifecycle;
     private BookTools books;
     private ReaderLiveLaunchHooks liveLaunches;
+    private ShortDramaAdHooks shortDramaAds;
     private BottomNavigationHooks bottomNavigation;
     private final Map<View,String> forcedHidden=Collections.synchronizedMap(new WeakHashMap<>());
     private final Set<View> mineRoots=Collections.newSetFromMap(Collections.synchronizedMap(new WeakHashMap<View,Boolean>()));
@@ -92,6 +93,7 @@ public final class ModuleHook extends XposedModule {
         new PostShortcutHooks(this,host,context.getClassLoader()).install();
         new ReaderBannerHooks(this,host,context.getClassLoader()).install();
         new ReaderAdHooks(this,host,context.getClassLoader()).install();
+        if(on("hide_short_drama_ad")){shortDramaAds=new ShortDramaAdHooks(this,host,context.getClassLoader());shortDramaAds.install();}
         liveLaunches=new ReaderLiveLaunchHooks(this,host,context.getClassLoader());liveLaunches.install();
         features=new FeatureHooks(this,host,context.getClassLoader());
         features.install();
