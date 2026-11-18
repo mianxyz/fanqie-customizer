@@ -86,7 +86,7 @@ public final class SettingsActivity extends Activity {
     }
     private void reading(){
         card("阅读界面",null);toggle("hide_reader_video_entry","隐藏章末免广告入口","隐藏章末“看视频免广告”按钮。");toggle("hide_reader_audio","隐藏快捷听书按钮",null);
-        card("广告与游戏",null);toggle("hide_banner","隐藏原生横幅广告","同时取消已适配阅读页的广告占位，防止正文被顶起。");toggle("hide_reader_ads","隐藏阅读广告组件","拦截已适配的阅读整页、插屏、广告弹窗及直播推广。");toggle("hide_reader_live_popup","屏蔽阅读页直播弹窗","需同时开启隐藏阅读广告组件。也会阻止阅读页主动打开的内置直播播放器。");toggle("hide_games","隐藏章末小游戏",null);note("广告隐藏覆盖已识别的组件，部分动态页面可能需要继续适配。");
+        card("广告与游戏",null);toggle("hide_banner","隐藏原生横幅广告","同时取消已适配阅读页的广告占位，防止正文被顶起。");toggle("hide_reader_ads","隐藏阅读广告组件","拦截已适配的阅读整页、插屏、广告弹窗及直播推广。");toggle("hide_reader_live_popup","屏蔽阅读页直播弹窗","需同时开启隐藏阅读广告组件。也会阻止阅读页主动打开的内置直播播放器。");toggle("hide_short_drama_ad","关闭短剧插页广告","关闭阅读过程中插入的短剧广告与章节间短剧推广。独立于“隐藏阅读广告组件”，重启番茄后生效。");toggle("hide_games","隐藏章末小游戏",null);note("广告隐藏覆盖已识别的组件，部分动态页面可能需要继续适配。");
     }
     private void mine(){
         card("收益与游戏",null);toggle("hide_income","隐藏收益记录与收益卡片","可能同时隐藏余额显示区域。");toggle("hide_frequent_games","隐藏常玩游戏","包括侧栏游戏区域和已识别的收益区游戏入口。");

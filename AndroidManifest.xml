@@ -2,6 +2,10 @@
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35" />
     <queries><package android:name="com.dragon.read" /></queries>
     <application android:name=".SettingsApp" android:label="番茄界面定制" android:icon="@drawable/ic_module" android:description="@string/module_description" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:supportsRtl="true">
+        <receiver android:name=".SettingsResponder" android:exported="true">
+            <intent-filter><action android:name="io.github.mianxyz.fanqiecustomizer.REQUEST_SETTINGS" /></intent-filter>
+        </receiver>
+        <provider android:name=".SettingsProvider" android:authorities="io.github.mianxyz.fanqiecustomizer.settings" android:exported="true" />
         <provider android:name="io.github.libxposed.service.XposedProvider" android:authorities="io.github.mianxyz.fanqiecustomizer.XposedService" android:exported="true" />
         <activity android:name=".SettingsActivity" android:exported="true">
             <intent-filter>

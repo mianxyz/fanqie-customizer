@@ -35,7 +35,7 @@ final class PrivacyRules {
             case "enabled":case "in_app_entry":case "debug":case "trace_ab":case "local_vip":
             case "hide_welfare_float":case "hide_post_float":case "hide_drama_resume":case "auto_expand_shelf":case "hide_coin":
             case "hide_reader_video_entry":case "hide_reader_audio":
-            case "hide_banner":case "hide_reader_ads":case "hide_reader_live_popup":case "hide_games":
+            case "hide_banner":case "hide_reader_ads":case "hide_reader_live_popup":case "hide_short_drama_ad":case "hide_games":
             case "hide_income":case "hide_frequent_games":case "show_book_id":case "book_id_search":
             case "force_open_removed":case "raw_read_counts":case "hide_update_popup":return true;
             default:return false;

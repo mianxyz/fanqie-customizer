@@ -18,14 +18,19 @@ public final class SettingsApp extends Application {
 
     @Override public void onCreate() {
         super.onCreate();
-        XposedServiceHelper.registerListener(new XposedServiceHelper.OnServiceListener() {
-            @Override public void onServiceBind(XposedService bound) {
-                main.post(() -> { service=bound; sync(); });
-            }
-            @Override public void onServiceDied(XposedService dead) {
-                main.post(() -> { if(service==dead){service=null;synced=false;status="框架连接已断开。重新打开设置页后重试。";notifyListener();} });
-            }
-        });
+        try {
+            XposedServiceHelper.registerListener(new XposedServiceHelper.OnServiceListener() {
+                @Override public void onServiceBind(XposedService bound) {
+                    main.post(() -> { service=bound; sync(); });
+                }
+                @Override public void onServiceDied(XposedService dead) {
+                    main.post(() -> { if(service==dead){service=null;synced=false;status="框架连接已断开。重新打开设置页后重试。";notifyListener();} });
+                }
+            });
+        } catch(Throwable error) {
+            // Embedded frameworks do not ship XposedServiceHelper; the file fallback below still works.
+        }
+        main.post(this::sync);
     }
 
     public SharedPreferences local() { return getSharedPreferences(Rules.PREFS, MODE_PRIVATE); }
@@ -36,7 +41,8 @@ public final class SettingsApp extends Application {
     private void notifyListener() { if(listener!=null)listener.run(); }
 
     public boolean sync() {
-        if(service==null){synced=false;status="设置已保存到本机，等待框架连接后同步。";notifyListener();return false;}
+        EmbeddedPrefs.write(this, (key, fallback) -> local().getBoolean(key, fallback));
+        if(service==null){synced=false;status="设置已保存到本机（含共享配置后备通道），等待框架连接后同步。";notifyListener();return false;}
         try {
             SharedPreferences.Editor editor=service.getRemotePreferences(Rules.PREFS).edit().clear();
             for(Map.Entry<String,?> entry:local().getAll().entrySet())

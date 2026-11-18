@@ -6,6 +6,26 @@ public final class Rules {
     public static final String PACKAGE = "io.github.mianxyz.fanqiecustomizer";
     public static final String TARGET = "com.dragon.read";
     public static final String PREFS = "settings";
+    /** Setting keys that are not part of the tab / channel / mine groups. */
+    public static final String[] EXTRA_KEYS = {
+        "enabled","in_app_entry","debug","trace_ab","local_vip",
+        "hide_welfare_float","hide_post_float","hide_drama_resume","auto_expand_shelf","hide_coin",
+        "hide_reader_video_entry","hide_reader_audio",
+        "hide_banner","hide_reader_ads","hide_reader_live_popup","hide_short_drama_ad","hide_games",
+        "hide_income","hide_frequent_games","show_book_id","book_id_search",
+        "force_open_removed","raw_read_counts","hide_update_popup"
+    };
+    /** All known switches, used by the optional shared-settings fallback. */
+    public static String[] allSettingKeys() {
+        List<String> keys = new ArrayList<>();
+        Collections.addAll(keys, TAB_KEYS);
+        Collections.addAll(keys, CHANNEL_KEYS);
+        Collections.addAll(keys, MINE_KEYS);
+        Collections.addAll(keys, StartupTabRules.KEYS);
+        Collections.addAll(keys, TabletRules.KEYS);
+        Collections.addAll(keys, EXTRA_KEYS);
+        return keys.toArray(new String[0]);
+    }
     public static final String LOG_GUIDE = "开启模块中的‘输出命中日志’，确认配置已同步。强行停止并重新打开番茄，在问题页面复现后，进入 LSPosed → 日志 → 模块日志，导出并保存日志。\n\n日志可能包含个人信息，分享前请检查并遮盖敏感内容。";
     public static final String[] TAB_KEYS = {"hide_store", "hide_series", "hide_earn", "hide_shelf", "hide_mine"};
     public static final String[] TAB_LABELS = {"书城", "短剧", "赚钱", "书架", "我的"};

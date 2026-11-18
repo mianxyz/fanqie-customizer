@@ -3,12 +3,16 @@ package io.github.mianxyz.fanqiecustomizer;
 import android.app.*;
 import android.content.*;
 import android.content.pm.PackageInfo;
+import android.net.Uri;
 import android.os.*;
 import android.util.Log;
 import android.view.*;
 import android.widget.*;
 import android.graphics.Color;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.lang.reflect.Method;
 import io.github.libxposed.api.XposedModule;
 
@@ -24,6 +28,7 @@ public final class ModuleHook extends XposedModule {
     private Lifecycle lifecycle;
     private BookTools books;
     private ReaderLiveLaunchHooks liveLaunches;
+    private ShortDramaAdHooks shortDramaAds;
     private BottomNavigationHooks bottomNavigation;
     private final Map<View,String> forcedHidden=Collections.synchronizedMap(new WeakHashMap<>());
     private final Set<View> mineRoots=Collections.newSetFromMap(Collections.synchronizedMap(new WeakHashMap<View,Boolean>()));
@@ -53,9 +58,19 @@ public final class ModuleHook extends XposedModule {
         if(info.getLongVersionCode()!=73932L||!"7.3.9.32".equals(info.versionName)) {
             logMessage("Unsupported version; no adaptation installed.");return;
         }
-        SharedPreferences prefs=getRemotePreferences(Rules.PREFS);
-        for(Map.Entry<String,?> entry:prefs.getAll().entrySet())
-            if(PrivacyRules.settingKey(entry.getKey())&&entry.getValue() instanceof Boolean)flags.put(entry.getKey(),(Boolean)entry.getValue());
+        Map<String,Boolean> remoteFlags=new HashMap<>();
+        try {
+            SharedPreferences prefs=getRemotePreferences(Rules.PREFS);
+            if(prefs!=null)for(Map.Entry<String,?> entry:prefs.getAll().entrySet())
+                if(PrivacyRules.settingKey(entry.getKey())&&entry.getValue() instanceof Boolean)
+                    remoteFlags.put(entry.getKey(),(Boolean)entry.getValue());
+        }catch(Throwable error){logMessage("Remote preferences unavailable: "+PrivacyRules.errorType(error));}
+        if(!remoteFlags.isEmpty())flags.putAll(remoteFlags);
+        else {
+            Map<String,Boolean> fileFlags=EmbeddedPrefs.read();
+            if(fileFlags!=null){flags.putAll(fileFlags);logMessage("Settings loaded from shared file (embedded framework fallback).");}
+            requestSettings(context);
+        }
         lifecycle=new Lifecycle();app.registerActivityLifecycleCallbacks(lifecycle);
         books=new BookTools(this,new BookTools.Host(){public boolean on(String key){return ModuleHook.this.on(key);}public void log(String message){logOnce(message);}},context.getClassLoader());
         if(!on("enabled")){logMessage("5.0.5 loaded with customizations disabled; in-app book tools entry follows its own switch.");return;}
@@ -78,6 +93,7 @@ public final class ModuleHook extends XposedModule {
         new PostShortcutHooks(this,host,context.getClassLoader()).install();
         new ReaderBannerHooks(this,host,context.getClassLoader()).install();
         new ReaderAdHooks(this,host,context.getClassLoader()).install();
+        if(on("hide_short_drama_ad")){shortDramaAds=new ShortDramaAdHooks(this,host,context.getClassLoader());shortDramaAds.install();}
         liveLaunches=new ReaderLiveLaunchHooks(this,host,context.getClassLoader());liveLaunches.install();
         features=new FeatureHooks(this,host,context.getClassLoader());
         features.install();
@@ -85,6 +101,52 @@ public final class ModuleHook extends XposedModule {
         nativeUi.countSink=features::recordCount;nativeUi.install();
         if(on("local_vip"))installVip(context.getClassLoader());
         logMessage("5.0.5 modern API 102 loaded for 7.3.9.32.");
+    }
+
+    /** Optional fallback: obtain the latest switches before any hook is installed. Skipped entirely on LSPosed. */
+    private void requestSettings(Context context) {
+        Bundle reply=null;
+        try {
+            reply=context.getContentResolver().call(
+                    Uri.parse("content://"+SettingsProvider.AUTHORITY),
+                    SettingsProvider.METHOD,null,null);
+        }catch(Throwable error){logMessage("Settings provider unavailable: "+PrivacyRules.errorType(error)+" "+error.getMessage());}
+        Map<String,Boolean> received=collect(reply);
+        if(received!=null&&!received.isEmpty()){applySettings(received,"settings provider");return;}
+
+        Intent request=new Intent(SettingsResponder.ACTION);
+        request.setPackage(Rules.PACKAGE);
+        request.setClassName(Rules.PACKAGE,Rules.PACKAGE+".SettingsResponder");
+        request.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES|Intent.FLAG_RECEIVER_FOREGROUND);
+        HandlerThread thread=null;
+        try {
+            thread=new HandlerThread("FanqieSettings");thread.start();
+            Handler scheduler=new Handler(thread.getLooper());
+            CountDownLatch done=new CountDownLatch(1);
+            AtomicReference<Bundle> answer=new AtomicReference<>();
+            BroadcastReceiver receiver=new BroadcastReceiver(){
+                @Override public void onReceive(Context c,Intent i){answer.set(getResultExtras(true));done.countDown();}
+            };
+            context.sendOrderedBroadcast(request,null,receiver,scheduler,Activity.RESULT_OK,null,null);
+            try{done.await(1200,TimeUnit.MILLISECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}
+            received=collect(answer.get());
+            if(received!=null&&!received.isEmpty()){applySettings(received,"settings app");return;}
+            logMessage("Settings reply empty; keeping shared file values.");
+        }catch(Throwable error){logMessage("Settings request skipped: "+PrivacyRules.errorType(error));}
+        finally{if(thread!=null)thread.quitSafely();}
+    }
+
+    private Map<String,Boolean> collect(Bundle extras){
+        if(extras==null)return null;
+        Map<String,Boolean> received=new HashMap<>();
+        for(String key:extras.keySet())if(PrivacyRules.settingKey(key))received.put(key,extras.getBoolean(key));
+        return received;
+    }
+
+    private void applySettings(Map<String,Boolean> received,String source){
+        flags.clear();flags.putAll(received);
+        EmbeddedPrefs.writeHost(received);
+        logMessage("Settings received from "+source+": "+received.size());
     }
 
     private boolean on(String key){return flags.containsKey(key)?Boolean.TRUE.equals(flags.get(key)):Rules.defaultOn(key);}
