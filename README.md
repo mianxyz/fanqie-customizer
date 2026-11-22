@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="icon.svg" width="96" height="96" alt="番茄 UI 自定义图标" />
+  <img src="res/mipmap-xxxhdpi/ic_launcher.png" width="96" height="96" alt="Pulp 图标" />
   <h1>Pulp · 番茄 UI 自定义</h1>
   <p>Pulp 6.0 · versionCode 100 · LSPosed 模块</p>
 </div>
