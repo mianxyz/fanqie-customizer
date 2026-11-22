@@ -92,6 +92,8 @@
 
 - 如果觉得我做的还不错的话，就给我买杯奶茶吧(＾∇＾)🧋
 
+<img src="app/src/main/res/drawable/qr_wechat.png" width="220" alt="微信赞赏码" />
+
 ### 🔌 免 Root 安装（LSPatch / FPA）
 
 除标准 LSPosed 外，模块同时兼容内嵌进宿主 APK 的免 Root 框架。两条通道并存，互不影响：
