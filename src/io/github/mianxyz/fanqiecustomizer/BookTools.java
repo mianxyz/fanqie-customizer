@@ -25,7 +25,18 @@ final class BookTools {
     private final Map<Activity,String> badgeKeys=new WeakHashMap<>();
     BookTools(XposedModule module,Host host,ClassLoader loader){this.module=module;this.host=host;this.loader=loader;}
 
+    private final Set<View> unfolded=Collections.newSetFromMap(new WeakHashMap<>());
     void install(){
+        if(host.on("auto_expand_shelf")){
+            String name="com.dragon.read.component.biz.impl.bookshelf.feed.BSFeedTitleHeaderView";
+            try{
+                Class<?> type=HostSymbols.type(name,loader);
+                for(Method m:type.getDeclaredMethods())if((HostSymbols.matches(m,"a")&&Arrays.equals(m.getParameterTypes(),new Class<?>[]{boolean.class,boolean.class}))||(HostSymbols.matches(m,"b")&&m.getParameterCount()==0)){
+                    module.hook(m).intercept(chain->{Object result=chain.proceed();View header=(View)chain.getThisObject();header.post(()->unfold(header));return result;});
+                }
+                module.hook(type.getDeclaredConstructor(Context.class,android.util.AttributeSet.class)).intercept(chain->{Object result=chain.proceed();View header=(View)chain.getThisObject();header.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){v.post(()->unfold(v));}public void onViewDetachedFromWindow(View v){}});return result;});
+            }catch(Throwable error){host.log("Bookshelf event hook failed: "+error.getClass().getSimpleName());}
+        }
         if(host.on("force_open_removed")){
             install("com.dragon.read.reader.utils.h","b",method->
                 method.getParameterCount()==3&&method.getParameterTypes()[1]==Bundle.class,
@@ -50,7 +61,7 @@ final class BookTools {
     private void install(String name,String method,Predicate filter,Before action){
         int count=0;
         try{
-            for(Method m:Class.forName(name,false,loader).getDeclaredMethods())if(m.getName().equals(method)&&filter.matches(m)){
+            for(Method m:HostSymbols.type(name,loader).getDeclaredMethods())if(HostSymbols.matches(m,method)&&filter.matches(m)){
                 module.hook(m).intercept(chain->{Object[] args=chain.getArgs().toArray();try{if(action.apply(chain.getThisObject(),args))return null;}catch(Throwable error){host.log("Book adaptation error: "+name+"."+method+" "+error.getClass().getSimpleName());}return chain.proceed(args);});count++;
             }
         }catch(Throwable error){host.log("Book hook unavailable: "+name+"."+method+" "+error.getClass().getSimpleName());}
@@ -58,8 +69,8 @@ final class BookTools {
     }
 
     void decorate(Activity activity){
-        if(host.on("in_app_entry")&&BookRules.isSettingsPage(activity.getClass().getName()))settingsEntry(activity);
-        if(host.on("enabled")&&BookRules.isBookPage(activity.getClass().getName())&&(host.on("show_book_id")||host.on("force_open_removed")))bookBadge(activity);
+        if(host.on("in_app_entry")&&BookRules.isSettingsPage(HostSymbols.canonical(activity.getClass().getName())))settingsEntry(activity);
+        if(host.on("enabled")&&BookRules.isBookPage(HostSymbols.canonical(activity.getClass().getName()))&&(host.on("show_book_id")||host.on("force_open_removed")))bookBadge(activity);
     }
     void release(Activity activity){settingEntries.remove(activity);bookBadges.remove(activity);badgeKeys.remove(activity);}
     private void settingsEntry(Activity activity){
@@ -87,19 +98,20 @@ final class BookTools {
         String id=BookRules.bookId(raw);if(id==null||activity.isFinishing()||activity.isDestroyed())return false;
         try{
             if(reader){
-                Class<?> cls=Class.forName("com.dragon.read.reader.utils.ReaderBundleBuilder",false,loader);
+                Class<?> cls=HostSymbols.type("com.dragon.read.reader.utils.ReaderBundleBuilder",loader);
                 Constructor<?> ctor=cls.getDeclaredConstructor(Context.class,String.class);ctor.setAccessible(true);Object builder=ctor.newInstance(activity,id);
-                Method check=cls.getDeclaredMethod("setCheckBookStatus",boolean.class);check.setAccessible(true);check.invoke(builder,!(host.on("enabled")&&host.on("force_open_removed")));
-                Method start=cls.getDeclaredMethod("openReader");start.setAccessible(true);start.invoke(builder);
+                Method check=cls.getDeclaredMethod(HostSymbols.methodName(cls,"setCheckBookStatus"),boolean.class);check.setAccessible(true);check.invoke(builder,!(host.on("enabled")&&host.on("force_open_removed")));
+                Method start=cls.getDeclaredMethod(HostSymbols.methodName(cls,"openReader"));start.setAccessible(true);start.invoke(builder);
             }else{
-                Intent intent=new Intent().setClassName(Rules.TARGET,"com.dragon.read.reader.detail.BookDetailActivity");intent.putExtra("bookId",id);intent.putExtra("enter_from_tag","fanqie_customizer");activity.startActivity(intent);
+                // 用宿主自己的包名，Play 版与国内版是两份独立安装。
+                Intent intent=new Intent().setClassName(activity.getPackageName(),HostSymbols.name("com.dragon.read.reader.detail.BookDetailActivity"));intent.putExtra("bookId",id);intent.putExtra("enter_from_tag","fanqie_customizer");activity.startActivity(intent);
             }
             return true;
         }catch(Throwable error){host.log("Book navigation failed: "+error.getClass().getSimpleName());Toast.makeText(activity,"此入口暂时无法打开，请查看命中日志。",Toast.LENGTH_LONG).show();return false;}
     }
     private void bookBadge(Activity activity){
         String id=currentId(activity);if(id==null)return;
-        boolean reader=BookRules.isReaderPage(activity.getClass().getName());boolean showId=host.on("show_book_id"),force=!reader&&host.on("force_open_removed");
+        boolean reader=BookRules.isReaderPage(HostSymbols.canonical(activity.getClass().getName()));boolean showId=host.on("show_book_id"),force=!reader&&host.on("force_open_removed");
         if(!showId&&!force)return;
         String key=id+":"+showId+":"+force;if(key.equals(badgeKeys.get(activity)))return;
         FrameLayout parent=content(activity);if(parent==null)return;
@@ -114,20 +126,21 @@ final class BookTools {
     private static void copy(Activity activity,String id){ClipboardManager clipboard=(ClipboardManager)activity.getSystemService(Context.CLIPBOARD_SERVICE);if(clipboard!=null){clipboard.setPrimaryClip(ClipData.newPlainText("书籍编号",id));Toast.makeText(activity,"书籍编号已复制",Toast.LENGTH_SHORT).show();}}
     private String currentId(Activity activity){
         try{String id=BookRules.bookId(activity.getIntent().getStringExtra("bookId"));if(id!=null)return id;}catch(Throwable ignored){}
-        if(BookRules.isReaderPage(activity.getClass().getName()))try{
-            Object value=activity.getClass().getMethod("getBookId").invoke(activity);
+        if(BookRules.isReaderPage(HostSymbols.canonical(activity.getClass().getName())))try{
+            Object value=activity.getClass().getMethod(HostSymbols.publicMethodName(activity.getClass(),"getBookId")).invoke(activity);
             return value instanceof String?BookRules.bookId((String)value):null;
         }catch(Throwable ignored){}
         return null;
     }
 
     void unfold(View header){
-        if(!host.on("auto_expand_shelf")||!header.isShown()||pendingUnfold.contains(header))return;
+        if(!host.on("enabled")||!host.on("auto_expand_shelf")||!header.isShown()||unfolded.contains(header)||pendingUnfold.contains(header))return;
+        if(ScrollWorkGate.busy(header)){pendingUnfold.add(header);header.postDelayed(()->{pendingUnfold.remove(header);unfold(header);},200);return;}
         try{
             TextView text=(TextView)field(header,"d");View arrow=(View)field(header,"e");
             if(!BookRules.needsUnfold(text.isShown()&&arrow.isShown(),header.isEnabled(),arrow.getRotation(),text.getText().toString()))return;
             Long last=unfoldAttempts.get(header);if(last!=null&&SystemClock.uptimeMillis()-last<3000)return;
-            pendingUnfold.add(header);header.postDelayed(()->{
+            pendingUnfold.add(header);long readyAt=SystemClock.uptimeMillis();header.post(()->{
                 pendingUnfold.remove(header);
                 try{
                     TextView label=(TextView)field(header,"d");View icon=(View)field(header,"e");
@@ -135,12 +148,12 @@ final class BookTools {
                     // m44.w binds the model's unfold callback to this header itself.
                     View target=header.isClickable()?header:null;
                     if(target==null||!target.isEnabled()){host.log("Bookshelf unfold control has no ready click listener");return;}
-                    unfoldAttempts.put(header,SystemClock.uptimeMillis());boolean clicked=target.performClick();host.log("Bookshelf native unfold click: "+clicked);
+                    unfoldAttempts.put(header,SystemClock.uptimeMillis());boolean clicked=target.performClick();if(clicked)unfolded.add(header);host.log("Bookshelf native unfold click: "+clicked+" readyLatencyMs="+(SystemClock.uptimeMillis()-readyAt));
                 }catch(Throwable error){host.log("Bookshelf unfold failed: "+error.getClass().getSimpleName());}
-            },200);
+            });
         }catch(Throwable error){host.log("Bookshelf header adaptation failed: "+error.getClass().getSimpleName());}
     }
-    private static Object field(Object object,String name)throws Throwable {Field f=object.getClass().getField(name);f.setAccessible(true);return f.get(object);}
+    private static Object field(Object object,String name)throws Throwable {Field f=object.getClass().getField(HostSymbols.publicFieldName(object.getClass(),name));f.setAccessible(true);return f.get(object);}
     private static FrameLayout content(Activity activity){View view=activity.findViewById(android.R.id.content);return view instanceof FrameLayout?(FrameLayout)view:null;}
     private static int dp(Context context,int value){return Math.round(value*context.getResources().getDisplayMetrics().density);}
     private static int bottomInset(Activity activity){WindowInsets insets=activity.getWindow().getDecorView().getRootWindowInsets();if(Build.VERSION.SDK_INT>=30&&insets!=null)return insets.getInsets(WindowInsets.Type.systemBars()).bottom;return dp(activity,24);}

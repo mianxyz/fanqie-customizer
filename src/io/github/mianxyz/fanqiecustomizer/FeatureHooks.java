@@ -16,6 +16,8 @@ final class FeatureHooks {
         void dataChanged();
         default boolean readerVisible(){return false;}
         default boolean tabletLayout(){return false;}
+        /** 整型参数（滑块）。默认返回 Rules 的缺省值，旧实现无需改动。 */
+        default int intValue(String key){return Rules.intDefault(key);}
     }
     private final XposedModule module;
     private final Host host;
@@ -53,17 +55,17 @@ final class FeatureHooks {
     private boolean any(String[] keys){for(String key:keys)if(host.on(key))return true;return false;}
     private String menuKey(String title,String type){String key=Rules.mineKey(title,type);return key!=null?key:TabletRules.key(host.tabletLayout(),title,type);}
     private void guarded(String operation,Runnable work){try{work.run();}catch(Throwable error){host.log(operation+": "+error.getClass().getSimpleName());}}
-    private Class<?> cls(String name)throws ClassNotFoundException{return Class.forName(name,false,loader);}
+    private Class<?> cls(String name)throws ClassNotFoundException{return HostSymbols.type(name,loader);}
     private void deserialize(String name,Action action){guarded("model "+name,()->{
         try{
             for(Class<?> nested:cls(name).getDeclaredClasses())for(Method method:nested.getDeclaredMethods())
-                if(method.getName().equals("deserialize")&&method.getParameterCount()==1){
-                    module.hook(method).intercept(chain->{Object result=chain.proceed();try{if(result!=null&&result.getClass().getName().equals(name))action.apply(result);}catch(Throwable e){host.log("model adaptation "+name+": "+e.getClass().getSimpleName());}return result;});
+                if(HostSymbols.matches(method,"deserialize")&&method.getParameterCount()==1){
+                    module.hook(method).intercept(chain->{Object result=chain.proceed();try{if(result!=null&&HostSymbols.canonical(result.getClass().getName()).equals(name))action.apply(result);}catch(Throwable e){host.log("model adaptation "+name+": "+e.getClass().getSimpleName());}return result;});
                 }
         }catch(Throwable e){throw new IllegalStateException(e);}
     });}
     private void before(String name,String methodName,ArgAction action){guarded("before "+name,()->{
-        try{for(Method method:cls(name).getDeclaredMethods())if(method.getName().equals(methodName))
+        try{for(Method method:cls(name).getDeclaredMethods())if(HostSymbols.matches(method,methodName))
             module.hook(method).intercept(chain->{Object[] args=chain.getArgs().toArray();try{action.apply(args);}catch(Throwable e){host.log("filter "+name+": "+e.getClass().getSimpleName());}return chain.proceed(args);});
         }catch(Throwable e){throw new IllegalStateException(e);}
     });}
@@ -72,20 +74,20 @@ final class FeatureHooks {
         catch(Throwable e){throw new IllegalStateException(e);}
     });}
     private void after(String name,String methodName,Action action){guarded("after "+name,()->{
-        try{for(Method method:cls(name).getDeclaredMethods())if(method.getName().equals(methodName))module.hook(method).intercept(chain->{Object result=chain.proceed();try{action.apply(chain.getThisObject());}catch(Throwable e){host.log("view adaptation failed: "+name);}return result;});}
+        try{for(Method method:cls(name).getDeclaredMethods())if(HostSymbols.matches(method,methodName))module.hook(method).intercept(chain->{Object result=chain.proceed();try{action.apply(chain.getThisObject());}catch(Throwable e){host.log("view adaptation failed: "+name);}return result;});}
         catch(Throwable e){throw new IllegalStateException(e);}
     });}
     private void afterResult(String name,String methodName,Action action){guarded("result "+name,()->{
-        try{for(Method method:cls(name).getDeclaredMethods())if(method.getName().equals(methodName)&&method.getParameterCount()==0)module.hook(method).intercept(chain->{Object result=chain.proceed();try{action.apply(result);}catch(Throwable e){host.log("result adaptation failed: "+name);}return result;});}
+        try{for(Method method:cls(name).getDeclaredMethods())if(HostSymbols.matches(method,methodName)&&method.getParameterCount()==0)module.hook(method).intercept(chain->{Object result=chain.proceed();try{action.apply(result);}catch(Throwable e){host.log("result adaptation failed: "+name);}return result;});}
         catch(Throwable e){throw new IllegalStateException(e);}
     });}
     private void blockVoid(String name,String methodName){guarded("block "+name,()->{
-        try{for(Method method:cls(name).getDeclaredMethods())if(method.getName().equals(methodName)&&method.getReturnType()==void.class)module.hook(method).intercept(chain->null);}
+        try{for(Method method:cls(name).getDeclaredMethods())if(HostSymbols.matches(method,methodName)&&method.getReturnType()==void.class)module.hook(method).intercept(chain->null);}
         catch(Throwable e){throw new IllegalStateException(e);}
     });}
     private void installConfig(){guarded("AB config",()->{
         try{for(Method method:cls("com.dragon.read.base.ssconfig.SsConfigMgr").getDeclaredMethods())
-            if(method.getName().equals("getABValue")&&method.getParameterCount()>0&&method.getParameterTypes()[0]==String.class){
+            if(HostSymbols.matches(method,"getABValue")&&method.getParameterCount()>0&&method.getParameterTypes()[0]==String.class){
                 module.hook(method).intercept(chain->{Object result=chain.proceed();String key=(String)chain.getArg(0);
                     try{
                         if(host.on("trace_ab")&&PrivacyRules.knownConfigName(key)&&abNames.add(key))host.log("AB key: "+key);
@@ -142,7 +144,7 @@ final class FeatureHooks {
     }
     private String missing(String value){return value==null||value.trim().isEmpty()?"未提供":value;}
     private static String string(Object value){return value instanceof CharSequence?value.toString():null;}
-    private static Object get(Object object,String field)throws Throwable {Field f=object.getClass().getField(field);return f.get(object);}
-    private static void set(Object object,String field,Object value)throws Throwable {Field f=object.getClass().getField(field);f.setAccessible(true);f.set(object,value);}
-    private static Object invoke(Object object,String method)throws Throwable {Method m=object.getClass().getMethod(method);m.setAccessible(true);return m.invoke(object);}
+    private static Object get(Object object,String field)throws Throwable {Field f=object.getClass().getField(HostSymbols.publicFieldName(object.getClass(),field));return f.get(object);}
+    private static void set(Object object,String field,Object value)throws Throwable {Field f=object.getClass().getField(HostSymbols.publicFieldName(object.getClass(),field));f.setAccessible(true);f.set(object,value);}
+    private static Object invoke(Object object,String method)throws Throwable {Method m=object.getClass().getMethod(HostSymbols.publicMethodName(object.getClass(),method));m.setAccessible(true);return m.invoke(object);}
 }

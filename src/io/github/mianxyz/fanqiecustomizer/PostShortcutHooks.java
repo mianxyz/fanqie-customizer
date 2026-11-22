@@ -19,7 +19,7 @@ final class PostShortcutHooks {
     void install(){
         if(!host.on(PostShortcutRules.KEY))return;
         try{
-            Class<?> root=Class.forName(PostShortcutRules.ROOT,false,loader);
+            Class<?> root=HostSymbols.type(PostShortcutRules.ROOT,loader);
             Constructor<?> constructor=root.getDeclaredConstructor(Context.class);
             module.hook(constructor).intercept(chain->{
                 Object result=chain.proceed();
@@ -38,7 +38,7 @@ final class PostShortcutHooks {
             host.log("Post shortcut constructor hook registered");
         }catch(Throwable error){host.log("Post shortcut constructor unavailable: "+PrivacyRules.errorType(error));}
         try{
-            Method visibility=Class.forName(PostShortcutRules.ROOT,false,loader).getDeclaredMethod("setVisibilitySafely",int.class);
+            Method visibility=HostSymbols.type(PostShortcutRules.ROOT,loader).getDeclaredMethod(HostSymbols.methodName(PostShortcutRules.ROOT,"setVisibilitySafely"),int.class);
             if(visibility.getReturnType()!=void.class)throw new NoSuchMethodException();
             module.hook(visibility).intercept(chain->{
                 Object[] args=chain.getArgs().toArray();
@@ -46,7 +46,7 @@ final class PostShortcutHooks {
                     Object receiver=chain.getThisObject();
                     if(receiver instanceof View){
                         View view=(View)receiver;
-                        String owner=activity(view.getContext()),name=view.getClass().getName();
+                        String owner=activity(view.getContext()),name=HostSymbols.canonical(view.getClass().getName());
                         boolean enabled=host.on(PostShortcutRules.KEY);
                         args[0]=PostShortcutRules.visibility(enabled,owner,name,(Integer)args[0]);
                         if(PostShortcutRules.suppress(enabled,owner,name))hide(view);
@@ -60,11 +60,11 @@ final class PostShortcutHooks {
         deoptimize("a");deoptimize("c");
     }
     private boolean target(View view){
-        return PostShortcutRules.suppress(host.on(PostShortcutRules.KEY),activity(view.getContext()),view.getClass().getName());
+        return PostShortcutRules.suppress(host.on(PostShortcutRules.KEY),activity(view.getContext()),HostSymbols.canonical(view.getClass().getName()));
     }
     private static String activity(Context context){
         for(int i=0;i<12&&context!=null;i++){
-            if(context instanceof Activity)return context.getClass().getName();
+            if(context instanceof Activity)return HostSymbols.canonical(context.getClass().getName());
             if(!(context instanceof ContextWrapper))break;
             Context base=((ContextWrapper)context).getBaseContext();if(base==context)break;context=base;
         }
@@ -76,7 +76,7 @@ final class PostShortcutHooks {
         host.forceHide(view,"post shortcut before draw");
     }
     private void deoptimize(String name){
-        try{for(Method method:Class.forName(PostShortcutRules.ROOT,false,loader).getDeclaredMethods())if(name.equals(method.getName()))module.deoptimize(method);}
+        try{for(Method method:HostSymbols.type(PostShortcutRules.ROOT,loader).getDeclaredMethods())if(HostSymbols.matches(method,name))module.deoptimize(method);}
         catch(Throwable error){host.log("Post shortcut caller unavailable: "+PrivacyRules.errorType(error));}
     }
     private final class DrawGuard implements View.OnAttachStateChangeListener,ViewTreeObserver.OnPreDrawListener {

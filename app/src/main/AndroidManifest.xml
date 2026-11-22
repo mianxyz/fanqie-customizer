@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <queries>
+        <package android:name="com.dragon.read" />
+        <!-- Google Play 海外版：独立包名，独立安装。 -->
+        <package android:name="com.dragon.read.oversea.gp" />
+    </queries>
+
+    <!--
+        Android 9 写公共相册需要这条旧权限；Android 10+ 走 MediaStore
+        并声明 maxSdkVersion=28，因此在 API 29 及以上不会被请求。
+        模块在框架内运行，不申请网络或读取用户文件等其它权限。
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <application
+        android:name=".SettingsApp"
+        android:label="Pulp"
+        android:icon="@mipmap/ic_launcher"
+        android:description="@string/module_description"
+        android:theme="@style/Theme.FanqieCustomizer"
+        android:allowBackup="false"
+        android:supportsRtl="true">
+
+        <!--
+            免 Root 内嵌框架（LSPatch / FPA）的配置后备通道。
+            LSPosed 主通道仍是 XposedService 远程偏好，这两个组件只在
+            远程偏好不可用时被调用；provider 提供同步读取（首启即生效），
+            receiver 是有序广播的第二顺位，文件是最后一层。
+        -->
+        <provider
+            android:name=".SettingsProvider"
+            android:authorities="io.github.mianxyz.fanqiecustomizer.settings"
+            android:exported="true" />
+
+        <receiver
+            android:name=".SettingsResponder"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.mianxyz.fanqiecustomizer.REQUEST_SETTINGS" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="io.github.libxposed.service.XposedProvider"
+            android:authorities="io.github.mianxyz.fanqiecustomizer.XposedService"
+            android:exported="true" />
+
+        <!-- 原生设置页（Compose 承载），保留原类名以兼容 LSPosed 入口 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:theme="@style/Theme.FanqieCustomizer">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.INFO" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+        </activity>
+
+        <activity-alias
+            android:name=".LauncherAlias"
+            android:targetActivity=".SettingsActivity"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+    </application>
+</manifest>

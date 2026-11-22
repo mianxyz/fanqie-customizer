@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标（Android 8.0+）。
+     背景用一张满版米色位图，而不是 <color>：
+     部分启动器（含 Pixel Launcher 的着色模式）会把纯色背景层按主题重新染色，
+     实测本机上 #F9F1E6 被渲染成了粉色 #FFC7C9。
+     用位图后颜色固定，不再随主题偏移；前景是插画本体，已留出遮罩安全区。 -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

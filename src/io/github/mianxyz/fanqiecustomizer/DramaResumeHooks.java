@@ -19,20 +19,20 @@ final class DramaResumeHooks {
             DramaResumeRules.automatic(host.on(DramaResumeRules.KEY),video(args[0]),Boolean.TRUE.equals(args[1])));
         // Delayed lifecycle/cached requests can reach attachment without submitting a new request.
         hook("e",new String[]{"android.app.Activity",MODEL,"boolean"},args->
-            DramaResumeRules.attach(host.on(DramaResumeRules.KEY),video(args[1]),Boolean.TRUE.equals(args[2]),args[0]==null?null:args[0].getClass().getName()));
+            DramaResumeRules.attach(host.on(DramaResumeRules.KEY),video(args[1]),Boolean.TRUE.equals(args[2]),args[0]==null?null:HostSymbols.canonical(args[0].getClass().getName())));
         deoptimize(MANAGER,"b");deoptimize(MANAGER,"i");
         deoptimize("pd6.f0","run");deoptimize("pd6.e0$c","onActivityResumed");
     }
     private boolean video(Object model)throws ReflectiveOperationException{
-        return model!=null&&model.getClass().getField("isVideo").getBoolean(model);
+        return model!=null&&model.getClass().getField(HostSymbols.publicFieldName(model.getClass(),"isVideo")).getBoolean(model);
     }
     private interface Filter {boolean block(Object[] args)throws Throwable;}
     private void hook(String name,String[] parameters,Filter filter){
         int count=0;
         try{
             Class<?>[] args=new Class<?>[parameters.length];
-            for(int i=0;i<args.length;i++)args[i]="boolean".equals(parameters[i])?boolean.class:Class.forName(parameters[i],false,loader);
-            Method method=Class.forName(MANAGER,false,loader).getDeclaredMethod(name,args);
+            for(int i=0;i<args.length;i++)args[i]="boolean".equals(parameters[i])?boolean.class:HostSymbols.type(parameters[i],loader);
+            Method method=HostSymbols.type(MANAGER,loader).getDeclaredMethod(HostSymbols.methodName(MANAGER,name),args);
             if(method.getReturnType()!=void.class)throw new NoSuchMethodException();
             module.hook(method).intercept(chain->{
                 Object[] values=chain.getArgs().toArray();
@@ -44,7 +44,7 @@ final class DramaResumeHooks {
         host.log("Drama resume hooks registered: "+MANAGER+"."+name+" = "+count);
     }
     private void deoptimize(String name,String method){
-        try{for(Method value:Class.forName(name,false,loader).getDeclaredMethods())if(method.equals(value.getName()))module.deoptimize(value);}
+        try{for(Method value:HostSymbols.type(name,loader).getDeclaredMethods())if(HostSymbols.matches(value,method))module.deoptimize(value);}
         catch(Throwable error){host.log("Drama resume caller unavailable: "+name+" "+PrivacyRules.errorType(error));}
     }
 }

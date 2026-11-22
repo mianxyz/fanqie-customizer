@@ -3,23 +3,31 @@ package io.github.mianxyz.fanqiecustomizer;
 import android.app.*;
 import android.content.*;
 import android.content.pm.PackageInfo;
+import android.net.Uri;
 import android.os.*;
 import android.util.Log;
 import android.view.*;
 import android.widget.*;
 import android.graphics.Color;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.lang.reflect.Method;
 import io.github.libxposed.api.XposedModule;
 
 public final class ModuleHook extends XposedModule {
     private static final String BAR="com.dragon.read.widget.BottomTabBarLayout";
     private final Map<String,Boolean> flags=new HashMap<>();
+    /** 整型参数（滑块）。与 flags 同批读取，缺省用 Rules.intDefault。 */
+    private final Map<String,Integer> ints=new HashMap<>();
     private final Set<String> logged=java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Map<Class<?>,String> classRules=new HashMap<>();
     private final Map<View,Integer> originalVisibility=new WeakHashMap<>();
     private boolean installed;
     private String processName;
+    private final BookmallBusinessConfig businessConfig=new BookmallBusinessConfig();
     private FeatureHooks features;
     private Lifecycle lifecycle;
     private BookTools books;
@@ -33,40 +41,170 @@ public final class ModuleHook extends XposedModule {
     }
 
     @Override public void onPackageReady(PackageReadyParam param) {
-        if(!Rules.TARGET.equals(param.getPackageName())||!Rules.TARGET.equals(processName)||!param.isFirstPackage())return;
+        // 只要求「包名是宿主」，进程名不再强制相等。
+        // 主进程的 processName 在不同框架/版本下可能是 "com.dragon.read"
+        // 或带后缀，强制相等会让入口彻底不匹配、模块完全不生效。
+        // 子进程是否处理由各 Hook 自行按需判断。
+        if(!Rules.isTargetPackage(param.getPackageName()))return;
+        if(!param.isFirstPackage())return;
         try {
             Method attach=Application.class.getDeclaredMethod("attach",Context.class);
             hook(attach).intercept(chain -> {
                 Object result=chain.proceed();
                 if(!installed) {
                     installed=true;
-                    try { initialize((Application)chain.getThisObject(),(Context)chain.getArg(0)); }
-                    catch(Throwable error){logMessage("Initialization failed: "+PrivacyRules.errorType(error));}
+                    final Application app=(Application)chain.getThisObject();
+                    final Context ctx=(Context)chain.getArg(0);
+                    // 不能在 attach 里装 Hook：这是宿主启动主线程。
+                    // 也不宜「立刻开后台线程」——42 处 Class.forName 会和
+                    // 宿主自身的类加载抢 DEX 索引锁，主线程照样被拖慢。
+                    // 改为等第一个 Activity 首帧之后再装：此时启动已完成，
+                    // 安装既不阻塞冷启动，也不与首屏渲染争资源。
+                    // 开屏/状态栏这两项必须在启动早期就位，但成本极低：
+                    // 只 Class.forName 一个宿主类 + 一个系统类，不扫方法表。
+                    // 因此放在主线程同步装，其余 40 处类查找走延迟安装。
+                    // 回到 5.0.5 已验证稳定的做法：在 attach 之后同步安装。
+                    // libxposed API 102 允许在拦截回调里安装其它类的 Hook，
+                    // 之前「重入会被拒绝」的判断是错的——那几轮新功能全部失效
+                    // 正是被延迟安装拖到了视图构造之后。
+                    //
+                    // 启动耗时由 loadSettings 保证：远程偏好命中即返回（毫秒级），
+                    // 免 Root 后备路径绝不阻塞主线程。
+                    logMessage("Attach reached; installing hooks");
+                    try { installAll(app,ctx); }
+                    catch(Throwable error){logMessage("Install FAILED: "+error.getClass().getName()+": "+error.getMessage());}
                 }
                 return result;
             });
         }catch(Throwable error){logMessage("Application hook failed: "+PrivacyRules.errorType(error));}
     }
 
-    private void initialize(Application app,Context context) throws Throwable {
-        PackageInfo info=context.getPackageManager().getPackageInfo(Rules.TARGET,0);
-        if(info.getLongVersionCode()!=73932L||!"7.3.9.32".equals(info.versionName)) {
-            logMessage("Unsupported version; no adaptation installed.");return;
+    /**
+     * 等宿主首屏渲染完成后再安装 Hook。
+     *
+     * 判据用第一个 Activity 的 onResume（首帧已在此时提交给合成器），
+     * 再留一小段缓冲，避开 onResume 里密集的业务初始化。
+     * 注册只挂一次，安装只跑一次。
+     */
+    /** 启动早期就必须就位、且加载成本极低的 Hook。 */
+    /**
+     * 在 attach 之后同步安装全部 Hook。
+     *
+     * 结构回到 5.0.5 的已验证形态：配置先就位，然后把各组 Hook 装上。
+     * 新增功能与老功能走同一条路径，不再有「延迟安装」这个分支。
+     */
+    private void installAll(Application app,Context ctx) {
+        long start=SystemClock.uptimeMillis();
+        loadSettings(ctx);
+        logMessage("Settings ready: bool="+flags.size()+" int="+ints.size()+" enabled="+on("enabled"));
+        if(!on("enabled")){
+            logMessage("Customizations disabled by configuration (enabled=false); hot hooks=0");
+            logMessage("All hooks installed in "+(SystemClock.uptimeMillis()-start)+"ms");
+            return;
         }
-        SharedPreferences prefs=getRemotePreferences(Rules.PREFS);
-        for(Map.Entry<String,?> entry:prefs.getAll().entrySet())
-            if(PrivacyRules.settingKey(entry.getKey())&&entry.getValue() instanceof Boolean)flags.put(entry.getKey(),(Boolean)entry.getValue());
-        lifecycle=new Lifecycle();app.registerActivityLifecycleCallbacks(lifecycle);
+        try {
+            installRest(app,ctx);
+        } catch (Throwable error) {
+            logMessage("Install FAILED: "+error.getClass().getName()+": "+error.getMessage());
+        }
+        logMessage("All hooks installed in "+(SystemClock.uptimeMillis()-start)+"ms");
+    }
+
+    /**
+     * 单个 Hook 组的安装隔离：失败只记日志，不影响其它功能。
+     *
+     * 同时记录每组耗时。宿主启动被拖慢时，这行日志能直接指出是哪一组，
+     * 不必再靠猜——之前排查启动慢就是因为没有任何计时信息。
+     */
+    private void installQuietly(String name, Runnable action) {
+        long start=SystemClock.uptimeMillis();
+        try {
+            action.run();
+        } catch (Throwable error) {
+            // 把异常类型和消息都打出来：只打类型会丢掉「方法不存在」这类关键信息。
+            logMessage("Hook group '"+name+"' FAILED: "+error.getClass().getName()+": "+error.getMessage());
+        }
+        long cost=SystemClock.uptimeMillis()-start;
+        logMessage("Hook group '"+name+"' done in "+cost+"ms");
+    }
+
+    private void installRest(Application app,Context context) throws Throwable {
+        // 版本检查必须容错：任一环节抛错都会让整个模块静默失效。
+        // 包名优先用入口已判定的宿主包名，避免 attach 阶段 context 尚未定型。
+        String hostPackage=null;
+        long versionCode=0L;
+        try {
+            String fromContext=context==null?null:context.getPackageName();
+            hostPackage=Rules.isTargetPackage(fromContext)?fromContext:hostPackage;
+            if(hostPackage==null)for(String candidate:Rules.TARGET_PACKAGES){
+                try{context.getPackageManager().getPackageInfo(candidate,0);hostPackage=candidate;break;}catch(Throwable ignored){}
+            }
+            if(hostPackage==null){logMessage("Host package not resolved; using "+Rules.TARGET);hostPackage=Rules.TARGET;}
+            PackageInfo info=context.getPackageManager().getPackageInfo(hostPackage,0);
+            versionCode=info.getLongVersionCode();
+            String versionName=info.versionName;
+            if(!Rules.supported(versionCode,versionName)) {
+                // 只警告不阻断：宿主小版本号变动不该让整模块失效。
+                // 各 Hook 自身按类名/方法名查找，缺什么会在对应分组里报 FAILED。
+                logMessage("Untested version "+versionName+" ("+versionCode+"); installing anyway");
+            }
+        } catch (Throwable error) {
+            // 取不到版本信息时不阻断：按最宽松处理继续安装，由各 Hook 自行判断。
+            logMessage("Version probe failed ("+PrivacyRules.errorType(error)+"); continuing with "+hostPackage);
+        }
+        if(!(Rules.TARGET.equals(hostPackage)&&versionCode==73932L))HostSymbolData.registerCurrent(hostPackage,versionCode);
+        HostSymbols.initialize(hostPackage,versionCode,context.getClassLoader(),this::logMessage);
+        // 配置已由 installAll 读好，这里不再重复读取。
+        final Lifecycle lifecycleRef=new Lifecycle();
+        lifecycle=lifecycleRef;
+        // 生命周期回调必须在主线程注册：后台线程注册会错过已经创建的 Activity。
+        // lifecycleRef 是 final，保证主线程一定能看到这个已构造好的对象。
+        new Handler(Looper.getMainLooper()).post(()->{
+            try{app.registerActivityLifecycleCallbacks(lifecycleRef);}
+            catch(Throwable error){logMessage("Lifecycle register failed: "+PrivacyRules.errorType(error));}
+        });
         books=new BookTools(this,new BookTools.Host(){public boolean on(String key){return ModuleHook.this.on(key);}public void log(String message){logOnce(message);}},context.getClassLoader());
-        if(!on("enabled")){logMessage("5.0.5 loaded with customizations disabled; in-app book tools entry follows its own switch.");return;}
+        // 主开关语义：只有「明确读到 enabled=false」才停用。
+        // 完全读不到配置时按启用处理——否则一次同步失败就会让模块
+        // 表现为「装了但完全不生效」，而这个状态用户无法自行判断。
+        if(!flags.isEmpty()&&!on("enabled")){
+            logMessage("Customizations disabled by configuration (enabled=false).");
+            return;
+        }
+        if(flags.isEmpty())logMessage("No settings were loaded; installing hooks with defaults.");
+        logMessage("Feature keys: barFloat="+on("glass_bottom_bar_floating")
+            +" barDock="+on("glass_bottom_bar_docked")
+            +" top="+on("glass_top_bar")
+            +" search="+on("hide_search_bar")
+            +" refresh="+on("refresh_confirm")
+            +" listen="+on("unlimited_listen")+" autoread="+on("unlimited_autoread"));
+        logMessage("Bar params: alpha="+intValue("glass_bar_alpha")
+            +" blur="+intValue("glass_bar_blur")
+            +" corner="+intValue("glass_bar_corner")
+            +" margin="+intValue("glass_bar_margin")
+            +" bottom="+intValue("glass_bar_bottom"));
+        ScrollWorkGate.install(this);
+        ScrollWorkGate.observeRecycler(this,context.getClassLoader());
         books.install();
         NativeUiHooks.Host host=new NativeUiHooks.Host(){
             public boolean on(String key){return ModuleHook.this.on(key);}
+            public int intValue(String key){return ModuleHook.this.intValue(key);}
             public void log(String text){logOnce(text);}
             public void forceHide(View view,String reason){forcedHidden.put(view,reason);if(Looper.myLooper()==Looper.getMainLooper())hide(view,reason);else new Handler(Looper.getMainLooper()).post(()->hide(view,reason));}
             public void dataChanged(){new Handler(Looper.getMainLooper()).post(()->{for(Controller c:lifecycle.controllers.values())c.schedule();});}
             public void mineRoot(View root){mineRoots.add(root);logOnce("Native mine root registered: "+root.getClass().getName());}
-            public void pageShown(String name){logOnce("Visible fragment: "+name);for(Controller c:lifecycle.controllers.values()){c.diagnosed=false;c.resumedAt=SystemClock.uptimeMillis();c.schedule();}}
+            public void pageShown(String name){
+                logOnce("Visible fragment: "+name);
+                GlobalGlassSurfaces.pageChanged();
+                for(Controller c:lifecycle.controllers.values()){c.diagnosed=false;c.resumedAt=SystemClock.uptimeMillis();c.schedule();}
+                // 书城页可见时补扫一次：这是日志里唯一稳定触发的入口
+                // （"Visible fragment: ...NewBookMallFragment"），
+                // 作为 SuperSwipeRefreshLayout / AppBarLayout 挂载完成后的双保险。
+                if(name!=null&&name.contains("NewBookMallFragment")&&glassSurfaces!=null){
+                    Activity current=lifecycle.resumedActivity;
+                    if(current!=null)glassSurfaces.scan(current);
+                }
+            }
             public boolean readerVisible(){Activity current=lifecycle.resumedActivity;return current!=null&&BookRules.isReaderPage(current.getClass().getName());}
             public boolean tabletLayout(){Activity current=lifecycle.resumedActivity;Context owner=current==null?context:current;return TabletRules.layout(owner.getResources().getConfiguration().smallestScreenWidthDp);}
         };
@@ -78,25 +216,177 @@ public final class ModuleHook extends XposedModule {
         new PostShortcutHooks(this,host,context.getClassLoader()).install();
         new ReaderBannerHooks(this,host,context.getClassLoader()).install();
         new ReaderAdHooks(this,host,context.getClassLoader()).install();
+        installQuietly("reader-drama-promotion",()->new ReaderDramaPromotionHooks(this,host,context.getClassLoader()).install());
+        // ── 新增功能：全部在这里同步安装，与老功能同一条路径 ──
+        // 每条都是独立隔离，一处失败不影响其余。
+        installQuietly("splash", () -> {
+            if(on("hide_splash_ad"))new SplashAdHooks(this,host,context.getClassLoader()).install();
+        });
+        installQuietly("statusbar", () -> {
+            if(on("hide_status_bar"))new ImmersiveHooks(this,host,context.getClassLoader()).install();
+        });
+        installQuietly("glass", () -> {
+            if(on("glass_bottom_bar_floating")||on("glass_bottom_bar_docked")||on("glass_top_bar")){
+                // 直接传入 attach 回调里现成的 Application。
+                // 之前 GlassSurfaces 自己反射 ActivityThread.mInitialApplication，
+                // 那个字段此刻还是 null，导致底栏入口从未注册（实机日志：
+                // "Glass lifecycle FAILED: no Application"，hooks 从 3 掉到 2）。
+                glassSurfaces=new GlassSurfaces(this,host,context.getClassLoader(),app);
+                glassSurfaces.install();
+            }
+        });
+        FeatureHooks.Host businessHost=new FeatureHooks.Host(){
+            public boolean on(String key){return businessOn(key);}
+            public void log(String text){logMessage(text);}
+            public void forceHide(View view,String reason){host.forceHide(view,reason);}
+            public void dataChanged(){host.dataChanged();}
+        };
+        installQuietly("global-glass",()->new GlobalGlassSurfaces(this,businessHost,context.getClassLoader()).install(app));
+        businessConfig.install(this,app,this::logMessage);
+        installQuietly("bookmall-business",()->new BookmallBusinessViews(businessHost).install(app));
+        installQuietly("refresh",()->new RefreshConfirm(this,businessHost,context.getClassLoader()).install());
+        installQuietly("privilege", () -> {
+            if(on("unlimited_listen")||on("unlimited_autoread")||on("hide_reader_ads"))
+                new PrivilegeHooks(this,host,context.getClassLoader()).install();
+        });
+        installQuietly("widget", () -> {
+            if(on("hide_widget_prompt"))
+                new WidgetPromptHooks(this,host,context.getClassLoader()).install();
+        });
+
         liveLaunches=new ReaderLiveLaunchHooks(this,host,context.getClassLoader());liveLaunches.install();
-        features=new FeatureHooks(this,host,context.getClassLoader());
-        features.install();
-        NativeUiHooks nativeUi=new NativeUiHooks(this,host,context.getClassLoader());
+        // Mine and sidebar filters share the live configuration adapter below.
+        NativeUiHooks.Host nativeHost=new NativeUiHooks.Host(){
+            public boolean on(String key){return BookmallBusinessConfig.manages(key)?businessOn(key):host.on(key);}
+            public void log(String text){host.log(text);}
+            public void forceHide(View v,String reason){host.forceHide(v,reason);}
+            public void dataChanged(){host.dataChanged();}
+            public boolean tabletLayout(){return host.tabletLayout();}
+            public void mineRoot(View root){host.mineRoot(root);}
+            public void pageShown(String name){host.pageShown(name);}
+        };
+        features=new FeatureHooks(this,nativeHost,context.getClassLoader());features.install();
+        NativeUiHooks nativeUi=new NativeUiHooks(this,nativeHost,context.getClassLoader());
         nativeUi.countSink=features::recordCount;nativeUi.install();
         if(on("local_vip"))installVip(context.getClassLoader());
-        logMessage("5.0.5 modern API 102 loaded for 7.3.9.32.");
+        logMessage("Pulp loaded for "+hostPackage+" code="+versionCode);
     }
 
+    /**
+     * 读取开关：LSPosed 远程偏好是主通道，只有在它拿不到任何一项时
+     * 才依次尝试 provider / 有序广播 / 共享文件。
+     *
+     * 为什么必须先问远程偏好：改成「总是先读后备」会让 Root 环境在
+     * 后备文件陈旧时覆盖框架里的最新配置，等于静默回退用户设置。
+     * 后备路径每一步都独立 try/catch，任何异常都不阻止 Hook 继续安装。
+     */
+    private void loadSettings(Context context) {
+        Map<String,Boolean> remote=new HashMap<>();
+        try {
+            SharedPreferences prefs=getRemotePreferences(Rules.PREFS);
+            if(prefs!=null)for(Map.Entry<String,?> entry:prefs.getAll().entrySet()){
+                String key=entry.getKey();
+                if(!PrivacyRules.settingKey(key))continue;
+                Object v=entry.getValue();
+                if(v instanceof Boolean)remote.put(key,(Boolean)v);
+                else if(v instanceof Integer&&Rules.isIntKey(key))
+                    ints.put(key,SettingsKeys.clamp(key,(Integer)v));
+            }
+        }catch(Throwable error){logMessage("Remote preferences unavailable: "+PrivacyRules.errorType(error));}
+        if(!remote.isEmpty()){
+            // 迁移必须在 putAll 之前：旧键要先换成新键，否则升级后底栏玻璃会消失。
+            SettingsKeys.migrate(remote);
+            flags.putAll(remote);
+            return;
+        }
+        // 只有包含主开关 enabled 的结果才算「真的拿到了用户配置」。
+        // 内嵌框架下 provider 与宿主同进程，读的是番茄自己的空 prefs；
+        // 若把「非空」当成功，就会用默认值覆盖、并跳过文件后备。
+        String source=null;
+        Map<String,Boolean> fallback=new HashMap<>();
+        // 每条后备路径都同时收集整型参数：只拿布尔会让滑块永远是默认值。
+        ints.clear();
+        Bundle fromProvider=callProvider(context);
+        SettingsKeys.collect(fromProvider,fallback);
+        SettingsKeys.collectInts(fromProvider,ints);
+        if(SettingsKeys.hasUserConfig(fallback))source="provider";
+        else{
+            fallback.clear();
+            ints.clear();
+            Bundle fromBroadcast=requestByBroadcast(context);
+            SettingsKeys.collect(fromBroadcast,fallback);
+            SettingsKeys.collectInts(fromBroadcast,ints);
+            if(SettingsKeys.hasUserConfig(fallback))source="broadcast";
+        }
+        if(source==null){
+            fallback.clear();
+            ints.clear();
+            Map<String,Boolean> file=EmbeddedPrefs.read(ints);
+            if(file!=null)fallback.putAll(file);
+            if(SettingsKeys.hasUserConfig(fallback))source="shared file";
+        }
+        if(source==null){
+            logMessage("No settings source available; using defaults.");
+            return;
+        }
+        SettingsKeys.migrate(fallback);
+        flags.putAll(fallback);
+        // 把有效配置写回宿主可见位置（内嵌框架下 provider 与宿主同进程时无副作用）。
+        EmbeddedPrefs.writeHost(fallback,ints);
+        logMessage("Settings loaded from "+source+" fallback: "+fallback.size()+" + "+ints.size()+" params");
+    }
+
+    private Bundle callProvider(Context context) {
+        try {
+            return context.getContentResolver().call(
+                    Uri.parse("content://"+SettingsProvider.AUTHORITY),
+                    SettingsProvider.METHOD,null,null);
+        }catch(Throwable error){
+            logMessage("Settings provider unavailable: "+PrivacyRules.errorType(error));
+            return null;
+        }
+    }
+
+    private Bundle requestByBroadcast(Context context) {
+        HandlerThread thread=null;
+        try {
+            thread=new HandlerThread("FanqieSettings");thread.start();
+            Handler scheduler=new Handler(thread.getLooper());
+            final CountDownLatch done=new CountDownLatch(1);
+            final AtomicReference<Bundle> answer=new AtomicReference<>();
+            BroadcastReceiver receiver=new BroadcastReceiver(){
+                @Override public void onReceive(Context c,Intent i){answer.set(getResultExtras(true));done.countDown();}
+            };
+            Intent request=new Intent(SettingsResponder.ACTION);
+            request.setPackage(Rules.PACKAGE);
+            request.setClassName(Rules.PACKAGE,SettingsResponder.class.getName());
+            request.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES|Intent.FLAG_RECEIVER_FOREGROUND);
+            context.sendOrderedBroadcast(request,null,receiver,scheduler,Activity.RESULT_OK,null,null);
+            try{done.await(1200,TimeUnit.MILLISECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}
+            return answer.get();
+        }catch(Throwable error){
+            logMessage("Settings broadcast skipped: "+PrivacyRules.errorType(error));
+            return null;
+        }finally{if(thread!=null)thread.quitSafely();}
+    }
+
+    private boolean businessOn(String key){Boolean live=businessConfig.value(key);return live!=null?live:on(key);}
     private boolean on(String key){return flags.containsKey(key)?Boolean.TRUE.equals(flags.get(key)):Rules.defaultOn(key);}
+
+    /** 读整型参数（滑块）。没同步到就用 Rules 里的默认值。 */
+    private int intValue(String key){
+        Integer v=ints.get(key);
+        return v!=null?v:Rules.intDefault(key);
+    }
     private void logMessage(String message){log(Log.INFO,"FanqieCustomizer",message);}
     private void logOnce(String message){if(on("debug")&&logged.add(message))logMessage(message);}
 
     private void installVip(ClassLoader loader) {
         try {
-            Class<?> cls=Class.forName("com.dragon.read.component.biz.impl.NsVipImpl",false,loader);
+            Class<?> cls=HostSymbols.type("com.dragon.read.component.biz.impl.NsVipImpl",loader);
             for(String name:new String[]{"isAnyVip","isVip","isSpecificVipOrHigher"}) {
                 for(Method method:cls.getDeclaredMethods()) {
-                    if(method.getName().equals(name)&&method.getReturnType()==boolean.class) {
+                    if(HostSymbols.matches(method,name)&&method.getReturnType()==boolean.class) {
                         hook(method).intercept(chain -> {logOnce("Local VIP: "+method.getName());return true;});
                     }
                 }
@@ -108,7 +398,7 @@ public final class ModuleHook extends XposedModule {
         if(classRules.containsKey(cls))return classRules.get(cls);
         String rule=null;
         for(Class<?> c=cls;c!=null&&View.class.isAssignableFrom(c);c=c.getSuperclass()) {
-            rule=Rules.viewRule(c.getName());if(rule!=null)break;
+            rule=Rules.viewRule(HostSymbols.canonical(c.getName()));if(rule!=null)break;
         }
         classRules.put(cls,rule);return rule;
     }
@@ -124,7 +414,7 @@ public final class ModuleHook extends XposedModule {
     private String contextualRule(View view,Activity activity){
         if(forcedHidden.containsKey(view))return forcedHidden.get(view);
         if("com.dragon.read.pages.main.MainFragmentActivity".equals(activity.getClass().getName())&&on("hide_post_float")){
-            String cls=view.getClass().getName();
+            String cls=HostSymbols.canonical(view.getClass().getName());
             if(cls.equals("dd5.o")||cls.equals("com.dragon.read.editor.CollapsingPublishLayout")||cls.equals("com.dragon.read.social.ui.PublishButton")||cls.equals("com.dragon.community.common.ui.contentpublish.PublishButton"))return "hide_post_float";
             if(view instanceof TextView&&"发帖子".contentEquals(((TextView)view).getText())){
                 int[] pos=new int[2];view.getLocationOnScreen(pos);
@@ -146,7 +436,7 @@ public final class ModuleHook extends XposedModule {
         }
         return null;
     }
-    private String resourceEntry(View view){try{return view.getResources().getResourceEntryName(view.getId());}catch(Throwable ignored){return null;}}
+    private String resourceEntry(View view){try{return HostSymbols.canonicalResource(view.getResources().getResourceEntryName(view.getId()));}catch(Throwable ignored){return null;}}
     private boolean inMine(View view){for(View current=view;current!=null;){if(mineRoots.contains(current))return true;current=current.getParent() instanceof View?(View)current.getParent():null;}return false;}
 
     private final class Controller implements ViewTreeObserver.OnGlobalLayoutListener,Runnable {
@@ -159,7 +449,7 @@ public final class ModuleHook extends XposedModule {
         @Override public void onGlobalLayout(){schedule();}
         void schedule(){if(!active||queued)return;queued=true;handler.postDelayed(this,Math.max(100,600-(SystemClock.uptimeMillis()-last)));}
         @Override public void run(){
-            queued=false;if(!active)return;last=SystemClock.uptimeMillis();
+            queued=false;if(!active)return;if(ScrollWorkGate.busy(root)){schedule();return;}last=SystemClock.uptimeMillis();
             try {
                 if(books!=null)books.decorate(activity);
                 if(!on("enabled"))return;
@@ -171,6 +461,7 @@ public final class ModuleHook extends XposedModule {
                     if(rule!=null&&on(rule)){hide(v,rule);continue;}
                     String contextual=contextualRule(v,activity);if(contextual!=null){hide(v,contextual);continue;}
                     if(BAR.equals(v.getClass().getName()))applyBar(v);
+                    // Search visibility is owned by synchronous, reversible search controllers.
                     if(books!=null&&"com.dragon.read.component.biz.impl.bookshelf.feed.BSFeedTitleHeaderView".equals(v.getClass().getName()))books.unfold(v);
                     if(v instanceof ViewGroup&&v.getVisibility()!=View.GONE){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++)queue.addLast(g.getChildAt(i));}
                 }
@@ -212,6 +503,9 @@ public final class ModuleHook extends XposedModule {
             if(!shortText.contentEquals(countBadge.getText()))countBadge.setText(shortText);
         }
     }
+
+    /** 玻璃模块实例，供书城 Fragment 可见时补扫一次。 */
+    private GlassSurfaces glassSurfaces;
 
     private final class Lifecycle implements Application.ActivityLifecycleCallbacks {
         final Map<Activity,Controller> controllers=new IdentityHashMap<>();

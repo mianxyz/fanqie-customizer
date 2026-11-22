@@ -43,12 +43,12 @@ final class UpdatePopupHooks {
     private boolean blocked(Object properties) {
         if(!(properties instanceof Enum<?>))return false;
         Enum<?> pop=(Enum<?>)properties;
-        return UpdatePopupRules.block(host.on("hide_update_popup"),pop.getDeclaringClass().getName(),pop.name());
+        return UpdatePopupRules.block(host.on("hide_update_popup"),HostSymbols.canonical(pop.getDeclaringClass().getName()),pop.name());
     }
     private Decision popup(Object[] args)throws Throwable {
         if(!blocked(args[1]))return Decision.pass();
         // The native popup rejection branch calls intercept; no ticket has been created yet.
-        if(args[3]!=null)try{Class.forName(LISTENER,false,loader).getMethod("intercept").invoke(args[3]);}
+        if(args[3]!=null)try{HostSymbols.type(LISTENER,loader).getMethod(HostSymbols.publicMethodName(HostSymbols.type(LISTENER,loader),"intercept")).invoke(args[3]);}
             catch(Throwable error){host.log("Automatic upgrade rejection listener failed: "+PrivacyRules.errorType(error));}
         host.log("Automatic upgrade popup request refused: "+((Enum<?>)args[1]).name());
         return Decision.stop(null);
@@ -63,11 +63,11 @@ final class UpdatePopupHooks {
     private void hook(String className,String name,String returns,String[] types,Before before) {
         int installed=0;
         try {
-            Class<?> type=Class.forName(className,false,loader);
+            Class<?> type=HostSymbols.type(className,loader);
             for(Method method:type.getDeclaredMethods()) {
-                if(!name.equals(method.getName())||!returns.equals(method.getReturnType().getName())||method.getParameterCount()!=types.length)continue;
+                if(!HostSymbols.matches(method,name)||!HostSymbols.name(returns).equals(method.getReturnType().getName())||method.getParameterCount()!=types.length)continue;
                 boolean match=true;Class<?>[] args=method.getParameterTypes();
-                for(int i=0;i<types.length;i++)match&=types[i].equals(args[i].getName());
+                for(int i=0;i<types.length;i++)match&=HostSymbols.name(types[i]).equals(args[i].getName());
                 if(!match)continue;
                 module.hook(method).intercept(chain->{
                     Object[] values=chain.getArgs().toArray();
@@ -80,7 +80,7 @@ final class UpdatePopupHooks {
         host.log("Automatic upgrade hooks registered: "+className+"."+name+" = "+installed);
     }
     private void deoptimize(String className,String name) {
-        try{for(Method method:Class.forName(className,false,loader).getDeclaredMethods())if(name.equals(method.getName()))module.deoptimize(method);}
+        try{for(Method method:HostSymbols.type(className,loader).getDeclaredMethods())if(HostSymbols.matches(method,name))module.deoptimize(method);}
         catch(Throwable error){host.log("Automatic upgrade caller adaptation unavailable: "+className+" "+PrivacyRules.errorType(error));}
     }
 }

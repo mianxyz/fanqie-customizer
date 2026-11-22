@@ -18,7 +18,13 @@ $classpath="$platform;$api;$service;$interface"
 New-Item -ItemType Directory -Force $OutputDirectory,(Join-Path $OutputDirectory 'classes'),(Join-Path $OutputDirectory 'dex') | Out-Null
 function Check([string]$Step){if($LASTEXITCODE -ne 0){throw "$Step failed ($LASTEXITCODE)"}}
 $classes=Join-Path $OutputDirectory 'classes'
-$sources=Get-ChildItem (Join-Path $PSScriptRoot 'src') -Recurse -Filter *.java | Select-Object -ExpandProperty FullName
+# The Compose UI lives in app/src/main/kotlin and is built by Gradle (see README).
+# This script keeps building the original pure-Java UI from legacy-java so that
+# the hand-rolled toolchain still produces a complete, working APK.
+$sources=@()
+$sources+=Get-ChildItem (Join-Path $PSScriptRoot 'src') -Recurse -Filter *.java | Select-Object -ExpandProperty FullName
+$legacy=Join-Path $PSScriptRoot 'legacy-java'
+if(Test-Path $legacy){$sources+=Get-ChildItem $legacy -Recurse -Filter *.java | Select-Object -ExpandProperty FullName}
 & (Join-Path $JdkRoot 'bin\javac.exe') --release 17 -encoding UTF-8 -cp $classpath -d $classes @sources
 Check 'javac'
 $classJar=Join-Path $OutputDirectory 'classes.jar'

@@ -24,8 +24,8 @@ final class StartupTabHooks {
         for(String key:Rules.TAB_KEYS)needed|=host.on(key);
         if(!needed)return;
         try {
-            Class<?> main=Class.forName(MAIN,false,loader),type=Class.forName(TYPE,false,loader);
-            Method create=main.getDeclaredMethod("onCreate",Bundle.class);
+            Class<?> main=HostSymbols.type(MAIN,loader),type=HostSymbols.type(TYPE,loader);
+            Method create=main.getDeclaredMethod(HostSymbols.methodName(main,"onCreate"),Bundle.class);
             module.hook(create).intercept(chain->{
                 Activity activity=(Activity)chain.getThisObject();State state=null;
                 try {
@@ -38,12 +38,12 @@ final class StartupTabHooks {
                 }catch(Throwable error){host.log("Startup tab entry classification failed: "+PrivacyRules.errorType(error));}
                 try{return chain.proceed();}finally{if(state!=null)state.initializing=false;}
             });
-            module.hook(main.getDeclaredMethod("X1")).intercept(chain->{
+            module.hook(main.getDeclaredMethod(HostSymbols.methodName(main,"X1"))).intercept(chain->{
                 Object result=chain.proceed();Activity activity=(Activity)chain.getThisObject();State state=states.get(activity);
                 if(state==null||!state.initializing||state.finished)return result;
                 try{return resolve(result);}catch(Throwable error){host.log("Startup tab resolution failed: "+PrivacyRules.errorType(error));return result;}
             });
-            module.hook(main.getDeclaredMethod("x2",type,boolean.class,boolean.class,String.class,boolean.class)).intercept(chain->{
+            module.hook(main.getDeclaredMethod(HostSymbols.methodName(main,"x2"),type,boolean.class,boolean.class,String.class,boolean.class)).intercept(chain->{
                 Object[] args=chain.getArgs().toArray();State state=states.get((Activity)chain.getThisObject());
                 if(state!=null&&!state.finished){
                     if(Boolean.TRUE.equals(args[1]))state.finished=true; // A user click takes precedence over pending startup work.
@@ -54,17 +54,17 @@ final class StartupTabHooks {
                 }
                 return chain.proceed(args);
             });
-            module.hook(main.getDeclaredMethod("onNewIntent",Intent.class)).intercept(chain->{
+            module.hook(main.getDeclaredMethod(HostSymbols.methodName(main,"onNewIntent"),Intent.class)).intercept(chain->{
                 State state=states.get((Activity)chain.getThisObject());if(state!=null)state.finished=true;
                 return chain.proceed();
             });
             module.deoptimize(create);
-            module.deoptimize(main.getDeclaredMethod("w2",type,boolean.class,boolean.class,String.class));
+            module.deoptimize(main.getDeclaredMethod(HostSymbols.methodName(main,"w2"),type,boolean.class,boolean.class,String.class));
             host.log("Startup tab native hooks registered");
         }catch(Throwable error){host.log("Startup tab hooks unavailable: "+PrivacyRules.errorType(error));}
     }
     private Object resolve(Object original)throws Throwable {
-        Field tabs=Class.forName("com.dragon.read.pages.main.m4",false,loader).getDeclaredField("e");tabs.setAccessible(true);
+        Field tabs=HostSymbols.type("com.dragon.read.pages.main.m4",loader).getDeclaredField(HostSymbols.fieldName("com.dragon.read.pages.main.m4","e"));tabs.setAccessible(true);
         Object value=tabs.get(null);if(!(value instanceof List<?>))return original;
         Map<String,Object> actual=new LinkedHashMap<>();Set<String> hidden=new HashSet<>();
         for(Object tab:(List<?>)value)if(tab instanceof Enum<?>){

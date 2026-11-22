@@ -18,6 +18,7 @@ final class NativeUiHooks {
     NativeUiHooks(XposedModule module,Host host,ClassLoader loader){this.module=module;this.host=host;this.loader=loader;}
 
     void install(){
+        if(host.on("hide_search_bar"))new DramaSearchVisibility(module,host).install();
         if(any(Rules.MINE_KEYS)||any(TabletRules.KEYS)||host.on("hide_income")){
             // The dispatcher also receives local defaults and cached plans, bypassing serializers.
             hook("sd4.c","g",(receiver,args)->{
@@ -26,14 +27,16 @@ final class NativeUiHooks {
                 if(hiddenCard(kind)){host.log("Native card removed: "+kind);return true;}
                 args[0]=filterCard(card,0);return false;
             },null);
+            // Both old and inlined converters consume a card containing the menu list.
+            hook("sd4.h","b",(receiver,args)->{if(args.length==4&&args[0]!=null)args[0]=filterCard(args[0],0);return false;},null);
             // This converter is used when an already-created native card refreshes its menu.
-            hook("sd4.h","a",(receiver,args)->{
-                for(Object arg:args)if(arg instanceof Enum<?> && arg.getClass().getName().equals("com.dragon.read.component.biz.api.model.CardType")){
+            if(HostSymbols.isBaseline()||!HostSymbols.methodName("sd4.h","a").contains("__missing_host_symbol__"))hook("sd4.h","a",(receiver,args)->{
+                for(Object arg:args)if(arg instanceof Enum<?> && HostSymbols.canonical(arg.getClass().getName()).equals("com.dragon.read.component.biz.api.model.CardType")){
                     String kind=enumName(arg);if(hiddenCard(kind)){host.log("Native menu removed: "+kind);return true;}
                 }
                 return false;
             },null);
-            deoptimize("com.dragon.read.component.biz.impl.mine.FanqieMineFragmentV2$g","accept");
+            if(HostSymbols.isBaseline())deoptimize("com.dragon.read.component.biz.impl.mine.FanqieMineFragmentV2$g","accept");
         }
         if(any(Rules.MINE_KEYS)||any(TabletRules.KEYS))hook("be4.e","a",null,(receiver,result)->{if(result!=null)filterSidebarMenu(result);});
         if(any(Rules.MINE_KEYS)||host.on("hide_income")||host.on("hide_frequent_games")){
@@ -41,7 +44,7 @@ final class NativeUiHooks {
                 if(result instanceof View)host.mineRoot((View)result);
             });
         }
-        if(any(Rules.CHANNEL_KEYS)){
+        { // Register the channel UI boundary once; live business flags are checked per call.
             // Copy at the final UI boundary so hidden channels are not written into the app cache.
             hook("com.dragon.read.component.biz.impl.NewBookMallFragment","Jh",(receiver,args)->{
                 if(args.length!=1||args[0]==null)return false;
@@ -62,8 +65,11 @@ final class NativeUiHooks {
             },null);
         }
         if(host.on("hide_income")){
-            for(String name:new String[]{"com.dragon.read.component.biz.impl.mine.card.model.b1","com.dragon.read.component.biz.impl.mine.card.model.PolarisCardWrapper"})
-                hook(name,"b",null,(receiver,result)->{if(result instanceof View)host.forceHide((View)result,"native income card");});
+            for(String name:new String[]{"com.dragon.read.component.biz.impl.mine.card.model.b1","com.dragon.read.component.biz.impl.mine.card.model.PolarisCardWrapper"})try{
+                Class<?> type=HostSymbols.type(name,loader);Method getter=HostSymbols.methodReturning(type,"b",View.class);
+                module.hook(getter).intercept(chain->{Object result=chain.proceed();if(result instanceof View)host.forceHide((View)result,"native income card");return result;});
+                host.log("Income getter registered: "+type.getName()+"."+getter.getName()+"()View");
+            }catch(Throwable error){host.log("Income getter error: "+name+" "+rootError(error));}
         }
         if(host.on("hide_frequent_games")){
             hook("com.dragon.read.kmp.mine.polaris.l2","d",(receiver,args)->{
@@ -91,7 +97,7 @@ final class NativeUiHooks {
                 if(result!=null)recordBoundCount(get(result,"bookInfo"));
             });
         }
-        if(host.on("debug")){
+        if(host.on("debug")||host.on("glass_global_enabled")||host.on("auto_expand_shelf")){
             for(String name:new String[]{"com.dragon.read.component.biz.impl.NewBookMallFragment","com.dragon.read.component.biz.impl.mine.FanqieMineFragmentV2","com.dragon.read.component.biz.impl.mine.functionpage.FanqieMineFunctionFragment"})
                 hook(name,"onVisible",null,(receiver,result)->host.pageShown(name));
         }
@@ -112,8 +118,8 @@ final class NativeUiHooks {
     private void hook(String name,String method,Before before,After after,boolean voidOnly){
         int installed=0;
         try{
-            for(Method m:Class.forName(name,false,loader).getDeclaredMethods()){
-                if(!m.getName().equals(method)||(voidOnly&&m.getReturnType()!=void.class))continue;
+            for(Method m:HostSymbols.type(name,loader).getDeclaredMethods()){
+                if(!HostSymbols.matches(m,method)||(voidOnly&&m.getReturnType()!=void.class))continue;
                 module.hook(m).intercept(chain->{
                     Object[] args=chain.getArgs().toArray();boolean skip=false;
                     host.log("Hook hit: "+name+"."+method);
@@ -128,7 +134,7 @@ final class NativeUiHooks {
         host.log("Hooks registered: "+name+"."+method+" = "+installed);
     }
     private void deoptimize(String name,String method){
-        try{int count=0;for(Method m:Class.forName(name,false,loader).getDeclaredMethods())if(m.getName().equals(method)){module.deoptimize(m);count++;}
+        try{int count=0;for(Method m:HostSymbols.type(name,loader).getDeclaredMethods())if(HostSymbols.matches(m,method)){module.deoptimize(m);count++;}
             host.log("Caller deoptimized: "+name+"."+method+" = "+count);
         }catch(Throwable error){host.log("Caller deoptimization unavailable: "+name+" "+rootError(error));}
     }
@@ -146,7 +152,7 @@ final class NativeUiHooks {
         if(!changed)return card;
         Object type=get(card,"a");Constructor<?> ctor=card.getClass().getDeclaredConstructor(((Enum<?>)type).getDeclaringClass(),List.class);
         ctor.setAccessible(true);Object copy=ctor.newInstance(type,next);
-        for(Field f:card.getClass().getFields())if(!Modifier.isStatic(f.getModifiers())&&!f.getName().equals("a")&&!f.getName().equals("b")){
+        for(Field f:card.getClass().getFields())if(!Modifier.isStatic(f.getModifiers())&&!HostSymbols.matches(f,"a")&&!HostSymbols.matches(f,"b")){
             f.setAccessible(true);f.set(copy,f.get(card));
         }
         return copy;
@@ -200,7 +206,7 @@ final class NativeUiHooks {
     private String rpcKind(int value){
         try{
             if(rpcKinds.isEmpty()){
-                Class<?> type=Class.forName("com.dragon.read.rpc.model.MyTabCellType",false,loader);Method getter=type.getDeclaredMethod("getValue");getter.setAccessible(true);
+                Class<?> type=HostSymbols.type("com.dragon.read.rpc.model.MyTabCellType",loader);Method getter=type.getDeclaredMethod(HostSymbols.methodName(type,"getValue"));getter.setAccessible(true);
                 for(Object item:type.getEnumConstants())rpcKinds.put(((Number)getter.invoke(item)).intValue(),enumName(item));
             }
         }catch(Throwable ignored){}return rpcKinds.get(value);
@@ -211,6 +217,6 @@ final class NativeUiHooks {
         for(Field field:source.getClass().getFields())if(!Modifier.isStatic(field.getModifiers())){field.setAccessible(true);field.set(copy,field.get(source));}
         return copy;
     }
-    private static Object get(Object object,String name)throws Throwable {Field field=object.getClass().getField(name);field.setAccessible(true);return field.get(object);}
-    private static void set(Object object,String name,Object value)throws Throwable {Field field=object.getClass().getField(name);field.setAccessible(true);field.set(object,value);}
+    private static Object get(Object object,String name)throws Throwable {Field field=object.getClass().getField(HostSymbols.fieldName(object.getClass(),name));field.setAccessible(true);return field.get(object);}
+    private static void set(Object object,String name,Object value)throws Throwable {Field field=object.getClass().getField(HostSymbols.fieldName(object.getClass(),name));field.setAccessible(true);field.set(object,value);}
 }

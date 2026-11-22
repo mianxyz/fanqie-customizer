@@ -65,13 +65,13 @@ final class ReaderAdHooks {
         for(String name:new String[]{"b","c"})hook("com.dragon.read.reader.depend.interceptors.c",name,"boolean",new String[]{"qo7.b"},
             (receiver,args)->blockDynamic(field(receiver,"d"))?Decision.stop(false,"Reader alternate ad page interceptor bypassed: "+name):Decision.pass());
         hook(DYNAMIC,"d","void",new String[]{CLIENT,"boolean"},(receiver,args)->{
-            Object context=args[0]==null?null:args[0].getClass().getMethod("getContext").invoke(args[0]);
+            Object context=args[0]==null?null:args[0].getClass().getMethod(HostSymbols.publicMethodName(args[0].getClass(),"getContext")).invoke(args[0]);
             if(!blockDynamic(context))return Decision.pass();
             // The native no-ad branch clears these same pending ad-only fields.
             try{
-                Class<?> type=Class.forName(DYNAMIC,false,loader);
-                for(String name:new String[]{"b","c","d"})type.getField(name).set(null,null);
-                type.getField("i").setInt(null,0);
+                Class<?> type=HostSymbols.type(DYNAMIC,loader);
+                for(String name:new String[]{"b","c","d"})type.getField(HostSymbols.publicFieldName(type,name)).set(null,null);
+                type.getField(HostSymbols.publicFieldName(type,"i")).setInt(null,0);
                 host.log("Reader pending dynamic ad cache cleared");
             }catch(Throwable error){host.log("Reader dynamic ad cache cleanup failed: "+error.getClass().getSimpleName());}
             return Decision.stop(null,"Reader asynchronous ad page insertion suppressed");
@@ -88,8 +88,8 @@ final class ReaderAdHooks {
     private void adWindows(){
         String fragmentName="com.bytedance.ad.live.component.sif.sif.SifDialogFragment";
         try{
-            Class<?> type=Class.forName(fragmentName,false,loader);
-            module.hook(type.getDeclaredMethod("onCreateDialog",android.os.Bundle.class)).intercept(chain->{
+            Class<?> type=HostSymbols.type(fragmentName,loader);
+            module.hook(type.getDeclaredMethod(HostSymbols.methodName(type,"onCreateDialog"),android.os.Bundle.class)).intercept(chain->{
                 Object result=chain.proceed();
                 if(result instanceof Dialog)liveDialogOwners.put((Dialog)result,new WeakReference<>(chain.getThisObject()));
                 return result;
@@ -102,7 +102,7 @@ final class ReaderAdHooks {
             WeakReference<Object> reference=liveDialogOwners.remove(dialog);
             Object fragment=reference==null?null:reference.get();
             if(fragment!=null)new Handler(Looper.getMainLooper()).post(()->{
-                try{fragment.getClass().getMethod("dismissAllowingStateLoss").invoke(fragment);}
+                try{fragment.getClass().getMethod(HostSymbols.publicMethodName(fragment.getClass(),"dismissAllowingStateLoss")).invoke(fragment);}
                 catch(Throwable error){host.log("Reader live ad fragment cleanup failed: "+error.getClass().getSimpleName());}
             });
             return Decision.stop(null,"Reader live ad preview window refused");
@@ -110,7 +110,7 @@ final class ReaderAdHooks {
         hook("com.dragon.read.widget.dialog.AbsQueueDialog","show","void",new String[]{},(receiver,args)->{
             boolean advertising=false;
             for(Class<?> type=receiver.getClass();type!=null;type=type.getSuperclass())
-                if("mb3.b".equals(type.getName())){advertising=true;break;}
+                if(HostSymbols.name("mb3.b").equals(type.getName())){advertising=true;break;}
             Dialog dialog=(Dialog)receiver;
             if(!advertising||!blockWindow(dialog,"mb3.b"))return Decision.pass();
             // Its native dismiss path cleans timers, mutex windows and the popup ticket.
@@ -120,7 +120,7 @@ final class ReaderAdHooks {
                 try{Object ticket=field(receiver,"popTicket");if(ticket!=null)call(TICKET,ticket,"onFinish");}
                 catch(Throwable ticketError){host.log("Reader ad window ticket cleanup failed: "+ticketError.getClass().getSimpleName());}
             }
-            return Decision.stop(null,"Reader screen ad window refused: "+receiver.getClass().getName());
+            return Decision.stop(null,"Reader screen ad window refused: "+HostSymbols.canonical(receiver.getClass().getName()));
         });
         deoptimize("com.dragon.read.component.NsUtilsDependImpl","showAdDialog");
     }
@@ -140,17 +140,17 @@ final class ReaderAdHooks {
             (receiver,args)->args[0]!=null&&blockLive(field(args[0],"a"))
                 ?Decision.stop(null,"Reader live ad launch refused: AdUtil"):Decision.pass());
         // The live implementation can arrive later from a separate plugin loader.
-        try{livePush(Class.forName("com.dragon.read.plugin.common.safeproxy.LivePluginProxy",false,loader));}
+        try{livePush(HostSymbols.type("com.dragon.read.plugin.common.safeproxy.LivePluginProxy",loader));}
         catch(Throwable error){host.log("Reader live push proxy unavailable: "+error.getClass().getSimpleName());}
         try{
-            Class<?> manager=Class.forName("com.dragon.read.plugin.common.PluginServiceManager",false,loader);
-            module.hook(manager.getDeclaredMethod("getLivePlugin")).intercept(chain->{
+            Class<?> manager=HostSymbols.type("com.dragon.read.plugin.common.PluginServiceManager",loader);
+            module.hook(manager.getDeclaredMethod(HostSymbols.methodName(manager,"getLivePlugin"))).intercept(chain->{
                 Object plugin=chain.proceed();
                 try{
                     if(plugin!=null){
                         livePush(plugin.getClass());
-                        if(plugin.getClass().getName().equals("com.dragon.read.plugin.common.safeproxy.LivePluginProxy")){
-                            Object real=plugin.getClass().getMethod("getReal").invoke(plugin);
+                        if(HostSymbols.canonical(plugin.getClass().getName()).equals("com.dragon.read.plugin.common.safeproxy.LivePluginProxy")){
+                            Object real=plugin.getClass().getMethod(HostSymbols.publicMethodName(plugin.getClass(),"getReal")).invoke(plugin);
                             if(real!=null)livePush(real.getClass());
                         }
                     }
@@ -164,7 +164,7 @@ final class ReaderAdHooks {
         deoptimize("com.dragon.read.ad.exciting.video.BdpLiveAdServiceImpl","realOpenLive");
     }
     private void livePush(Class<?> type)throws Throwable{
-        Method method=type.getMethod("showPush",android.app.Activity.class,Class.forName("kotlin.jvm.functions.Function1",false,loader));
+        Method method=type.getMethod(HostSymbols.publicMethodName(type,"showPush",android.app.Activity.class,HostSymbols.type("kotlin.jvm.functions.Function1",loader)),android.app.Activity.class,HostSymbols.type("kotlin.jvm.functions.Function1",loader));
         if(method.getReturnType()!=void.class||Modifier.isAbstract(method.getModifiers())||!livePushMethods.add(method))return;
         try{
             module.hook(method).intercept(chain->{
@@ -190,7 +190,7 @@ final class ReaderAdHooks {
     }
     private Decision popupDecision(Object receiver,Object[] args){
         String name=args[1] instanceof Enum<?>?((Enum<?>)args[1]).name():null;
-        String owner=args[0]==null?null:args[0].getClass().getName();
+        String owner=args[0]==null?null:HostSymbols.canonical(args[0].getClass().getName());
         if(!ReaderAdRules.blockPopup(host.on("hide_reader_ads"),owner,host.readerVisible(),name))return Decision.pass();
         // Match PopProxy's own rejection branch, including its optional listener.
         if(args[3]!=null)try{call("com.dragon.read.pop.IPopProxy$IListener",args[3],"intercept");}
@@ -202,43 +202,44 @@ final class ReaderAdHooks {
         hook(className,"run","void",new String[]{TICKET},(receiver,args)->{
             if(!scope.reading(receiver)||args[0]==null)return Decision.pass();
             if(clearDelayedData)try{
-                Class<?> api=Class.forName("com.dragon.read.NsUtilsDepend",false,loader);
-                api.getMethod("clearDelayHomepagePopData").invoke(api.getField("IMPL").get(null));
+                Class<?> api=HostSymbols.type("com.dragon.read.NsUtilsDepend",loader);
+                api.getMethod(HostSymbols.publicMethodName(api,"clearDelayHomepagePopData")).invoke(api.getField(HostSymbols.publicFieldName(api,"IMPL")).get(null));
             }catch(Throwable error){host.log("Reader delayed ad cleanup: "+error.getClass().getSimpleName());}
             call(TICKET,args[0],"onFinish");
             return Decision.stop(null,"Reader queued ad cancelled: "+className);
         });
     }
     private void call(String interfaceName,Object receiver,String methodName)throws Throwable{
-        Method method=Class.forName(interfaceName,false,loader).getMethod(methodName);method.setAccessible(true);method.invoke(receiver);
+        Method method=HostSymbols.type(interfaceName,loader).getMethod(HostSymbols.publicMethodName(HostSymbols.type(interfaceName,loader),methodName));method.setAccessible(true);method.invoke(receiver);
     }
     private void diagnostics(){
         try{
             module.hook(Dialog.class.getDeclaredMethod("show")).intercept(chain->{
                 Object result=chain.proceed();Object dialog=chain.getThisObject();
-                if(host.readerVisible()&&dialog!=null)host.log("Reader dialog shown: "+dialog.getClass().getName());
+                if(host.readerVisible()&&dialog!=null)host.log("Reader dialog shown: "+HostSymbols.canonical(dialog.getClass().getName()));
                 return result;
             });
         }catch(Throwable error){host.log("Reader dialog diagnostics unavailable: "+error.getClass().getSimpleName());}
+        if(!HostSymbols.isBaseline()&&!HostSymbols.hasMethodMapping("com.dragon.reader.lib.parserlevel.model.page.a","Z","(Ljava/lang/String;)V"))return;
         try{
-            Class<?> pageType=Class.forName(AD_PAGE,false,loader);
+            Class<?> pageType=HostSymbols.type(AD_PAGE,loader);
             for(Constructor<?> constructor:pageType.getDeclaredConstructors())module.hook(constructor).intercept(chain->{
                 Object result=chain.proceed();
                 try{
                     Object line=chain.getArg(1);
-                    if(readerClient(chain.getArg(0))&&line!=null)host.log("Reader ad page built: "+line.getClass().getName());
+                    if(readerClient(chain.getArg(0))&&line!=null)host.log("Reader ad page built: "+HostSymbols.canonical(line.getClass().getName()));
                 }catch(Throwable error){host.log("Reader ad page diagnostics failed: "+error.getClass().getSimpleName());}
                 return result;
             });
-            Class<?> basePage=Class.forName("com.dragon.reader.lib.parserlevel.model.page.a",false,loader);
-            module.hook(basePage.getDeclaredMethod("Z",String.class)).intercept(chain->{
+            Class<?> basePage=HostSymbols.type("com.dragon.reader.lib.parserlevel.model.page.a",loader);
+            module.hook(basePage.getDeclaredMethod(HostSymbols.methodName(basePage,"Z"),String.class)).intercept(chain->{
                 Object result=chain.proceed();
                 try{
                     if(ReaderAdRules.adExitTitle((String)chain.getArg(0))){
                         Object page=chain.getThisObject();
                         String lineName="unknown";
-                        if(pageType.isInstance(page)){Object line=field(page,"f");if(line!=null)lineName=line.getClass().getName();}
-                        host.log("Reader ad exit title assigned: page="+page.getClass().getName()+"; line="+lineName);
+                        if(pageType.isInstance(page)){Object line=field(page,"f");if(line!=null)lineName=HostSymbols.canonical(line.getClass().getName());}
+                        host.log("Reader ad exit title assigned: page="+HostSymbols.canonical(page.getClass().getName())+"; line="+lineName);
                     }
                 }catch(Throwable error){host.log("Reader ad title diagnostics failed: "+error.getClass().getSimpleName());}
                 return result;
@@ -256,10 +257,10 @@ final class ReaderAdHooks {
     private interface Before {Decision apply(Object receiver,Object[] args)throws Throwable;}
     private void hook(String className,String methodName,String returnType,String[] parameterTypes,Before before){
         int count=0;
-        try{for(Method method:Class.forName(className,false,loader).getDeclaredMethods()){
-            if(!method.getName().equals(methodName)||!method.getReturnType().getName().equals(returnType))continue;
+        try{for(Method method:HostSymbols.type(className,loader).getDeclaredMethods()){
+            if(!HostSymbols.matches(method,methodName)||!method.getReturnType().getName().equals(HostSymbols.name(returnType)))continue;
             Class<?>[] types=method.getParameterTypes();if(types.length!=parameterTypes.length)continue;
-            boolean match=true;for(int i=0;i<types.length;i++)match&=types[i].getName().equals(parameterTypes[i]);if(!match)continue;
+            boolean match=true;for(int i=0;i<types.length;i++)match&=types[i].getName().equals(HostSymbols.name(parameterTypes[i]));if(!match)continue;
             module.hook(method).intercept(chain->{
                 Object[] args=chain.getArgs().toArray();
                 try{Decision decision=before.apply(chain.getThisObject(),args);if(decision.stop){host.log(decision.message);return decision.result;}}
@@ -270,18 +271,18 @@ final class ReaderAdHooks {
         host.log("Reader ad hooks registered: "+className+"."+methodName+"("+String.join(",",parameterTypes)+") = "+count);
     }
     private void deoptimize(String className,String name){
-        try{for(Method method:Class.forName(className,false,loader).getDeclaredMethods())if(method.getName().equals(name))module.deoptimize(method);}
+        try{for(Method method:HostSymbols.type(className,loader).getDeclaredMethods())if(HostSymbols.matches(method,name))module.deoptimize(method);}
         catch(Throwable error){host.log("Reader ad caller adaptation unavailable: "+className+" "+error.getClass().getSimpleName());}
     }
-    private boolean readerClient(Object client)throws Throwable{return client!=null&&reader(client.getClass().getMethod("getContext").invoke(client));}
+    private boolean readerClient(Object client)throws Throwable{return client!=null&&reader(client.getClass().getMethod(HostSymbols.publicMethodName(client.getClass(),"getContext")).invoke(client));}
     private static boolean reader(Object owner){
         if(owner==null)return false;
         for(int i=0;i<12&&owner!=null;i++){
-            if(BookRules.isReaderPage(owner.getClass().getName()))return true;
+            if(BookRules.isReaderPage(HostSymbols.canonical(owner.getClass().getName())))return true;
             if(!(owner instanceof ContextWrapper))return false;
             Context next=((ContextWrapper)owner).getBaseContext();if(next==owner)return false;owner=next;
         }
         return false;
     }
-    private static Object field(Object receiver,String name)throws Throwable{Field field=receiver.getClass().getField(name);field.setAccessible(true);return field.get(receiver);}
+    private static Object field(Object receiver,String name)throws Throwable{Field field=receiver.getClass().getField(HostSymbols.publicFieldName(receiver.getClass(),name));field.setAccessible(true);return field.get(receiver);}
 }

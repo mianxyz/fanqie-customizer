@@ -3,3 +3,11 @@
 *.keystore
 *.log
 .DS_Store
+/local.properties
+.gradle/
+build/
+app/build/
+.verify/
+work/
+.reference/
+*.apk

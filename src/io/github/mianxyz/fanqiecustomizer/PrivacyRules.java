@@ -24,21 +24,20 @@ final class PrivacyRules {
         }
     }
 
+    /** 是否为受管的整型参数键（滑块）。供 Kotlin 侧 ConfigBridge 使用。 */
+    public static boolean isIntKey(String key) {
+        return Rules.isIntKey(key);
+    }
+
     static boolean settingKey(String key) {
         if(key==null)return false;
+        if(Rules.isIntKey(key))return true;
         for(String known:Rules.TAB_KEYS)if(known.equals(key))return true;
         for(String known:Rules.CHANNEL_KEYS)if(known.equals(key))return true;
         for(String known:Rules.MINE_KEYS)if(known.equals(key))return true;
         for(String known:StartupTabRules.KEYS)if(known.equals(key))return true;
         for(String known:TabletRules.KEYS)if(known.equals(key))return true;
-        switch(key) {
-            case "enabled":case "in_app_entry":case "debug":case "trace_ab":case "local_vip":
-            case "hide_welfare_float":case "hide_post_float":case "hide_drama_resume":case "auto_expand_shelf":case "hide_coin":
-            case "hide_reader_video_entry":case "hide_reader_audio":
-            case "hide_banner":case "hide_reader_ads":case "hide_reader_live_popup":case "hide_games":
-            case "hide_income":case "hide_frequent_games":case "show_book_id":case "book_id_search":
-            case "force_open_removed":case "raw_read_counts":case "hide_update_popup":return true;
-            default:return false;
-        }
+        for(String known:Rules.EXTRA_KEYS)if(known.equals(key))return true;
+        return false;
     }
 }

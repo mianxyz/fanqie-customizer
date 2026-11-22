@@ -58,11 +58,11 @@ final class ReaderBannerHooks {
     private void hook(String className,String methodName,String resultType,String[] parameterTypes,Before before){
         int count=0;
         try{
-            Class<?> type=Class.forName(className,false,loader);
+            Class<?> type=HostSymbols.type(className,loader);
             for(Method method:type.getDeclaredMethods()){
-                if(!method.getName().equals(methodName)||!method.getReturnType().getName().equals(resultType))continue;
+                if(!HostSymbols.matches(method,methodName)||!method.getReturnType().getName().equals(HostSymbols.name(resultType)))continue;
                 Class<?>[] parameters=method.getParameterTypes();if(parameters.length!=parameterTypes.length)continue;
-                boolean matches=true;for(int i=0;i<parameters.length;i++)matches&=parameters[i].getName().equals(parameterTypes[i]);
+                boolean matches=true;for(int i=0;i<parameters.length;i++)matches&=parameters[i].getName().equals(HostSymbols.name(parameterTypes[i]));
                 if(!matches)continue;
                 module.hook(method).intercept(chain->{
                     Object[] args=chain.getArgs().toArray();
@@ -75,8 +75,8 @@ final class ReaderBannerHooks {
         host.log("Reader banner hooks registered: "+className+"."+methodName+" = "+count);
     }
     private void deoptimize(String className,String... names){
-        try{for(Method method:Class.forName(className,false,loader).getDeclaredMethods())for(String name:names)
-            if(method.getName().equals(name)&&!Modifier.isAbstract(method.getModifiers())&&!Modifier.isNative(method.getModifiers()))module.deoptimize(method);
+        try{for(Method method:HostSymbols.type(className,loader).getDeclaredMethods())for(String name:names)
+            if(HostSymbols.matches(method,name)&&!Modifier.isAbstract(method.getModifiers())&&!Modifier.isNative(method.getModifiers()))module.deoptimize(method);
         }catch(Throwable error){host.log("Reader banner caller adaptation unavailable: "+className+" "+error.getClass().getSimpleName());}
     }
     private static boolean assistantReader(Object receiver)throws Throwable{return reader(field(receiver,"c"));}
@@ -89,6 +89,6 @@ final class ReaderBannerHooks {
         }
         return false;
     }
-    private static boolean reader(Object owner){return owner!=null&&BookRules.isReaderPage(owner.getClass().getName());}
-    private static Object field(Object receiver,String name)throws Throwable{Field field=receiver.getClass().getField(name);field.setAccessible(true);return field.get(receiver);}
+    private static boolean reader(Object owner){return owner!=null&&BookRules.isReaderPage(HostSymbols.canonical(owner.getClass().getName()));}
+    private static Object field(Object receiver,String name)throws Throwable{Field field=receiver.getClass().getField(HostSymbols.publicFieldName(receiver.getClass(),name));field.setAccessible(true);return field.get(receiver);}
 }
