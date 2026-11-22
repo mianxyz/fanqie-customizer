@@ -90,7 +90,7 @@
 
 ### 💝 赞赏
 
-- 微信 / 支付宝收款码分段切换，支持一键保存到系统相册 `Pictures/Pulp`（Android 10+ 走 MediaStore 无需存储权限；Android 9 按需申请）。
+- 如果觉得我做的还不错的话，就给我买杯奶茶吧(＾∇＾)🧋
 
 ### 🔌 免 Root 安装（LSPatch / FPA）
 
