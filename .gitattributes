@@ -1,0 +1,4 @@
+src/io/github/mianxyz/fanqiecustomizer/HostSymbolData.java linguist-generated=true
+tests/fixtures/** linguist-generated=true
+gradlew linguist-generated=true
+gradlew.bat linguist-generated=true
