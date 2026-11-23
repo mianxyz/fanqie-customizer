@@ -129,7 +129,7 @@ final class GlassSurfaces {
     void install() {
         boolean bar = host.on("glass_bottom_bar_floating") || host.on("glass_bottom_bar_docked");
         int hits = bar ? hookBottom() : 0;
-        if (bar) hits += hookSkinWrites();
+        if (bar) { installSwipeHook(); hits += hookSkinWrites(); }
         if (host.on("glass_top_bar")) hits += hookTop();
         host.log("Glass surfaces hooks: " + hits
                 + " floating=" + host.on("glass_bottom_bar_floating")
@@ -292,18 +292,19 @@ final class GlassSurfaces {
         return ok;
     }
 
-    void scan(android.app.Activity activity) {
+    void scan(android.app.Activity activity){
         try {
             View root = activity.getWindow().getDecorView();
             scanRoot = root;
             host.log("Glass scan start: " + activity.getClass().getSimpleName()
                     + " root=" + (root != null));
-            int found = sweep(root, 0);
+            View cached=cachedBar(root);
+            int found=0;if(cached!=null){applyToBar(cached,true);found=1;}
             host.log("Glass scan: found=" + found);
             // 诊断必须独立 try：之前把它跟在 sweep 后面，
             // 内部一抛异常整段日志就没了，反而更难定位。
             try {
-                host.log(diagnose(root));
+                if(host.on("debug"))host.log(diagnose(root));
             } catch (Throwable diagError) {
                 host.log("Glass diag ERR: " + diagError.getClass().getSimpleName()
                         + ": " + diagError.getMessage());
@@ -313,7 +314,7 @@ final class GlassSurfaces {
             if (root != null && found == 0) {
                 root.post(() -> {
                     try {
-                        int again = sweep(root, 0);
+                        View retry=cachedBar(root);int again=0;if(retry!=null){applyToBar(retry,true);again=1;}
                         host.log("Glass scan retry: found=" + again);
                     } catch (Throwable ignored) {
                     }
@@ -367,6 +368,8 @@ final class GlassSurfaces {
         return sb.toString();
     }
 
+    private final java.util.Map<View,java.lang.ref.WeakReference<View>> discoveredBars=new WeakHashMap<>();
+    private View cachedBar(View root){java.lang.ref.WeakReference<View> ref=discoveredBars.get(root);View bar=ref==null?null:ref.get();if(bar!=null&&bar.isAttachedToWindow()&&bar.getRootView()==root)return bar;bar=find(root,BOTTOM,0);if(bar!=null)discoveredBars.put(root,new java.lang.ref.WeakReference<>(bar));else discoveredBars.remove(root);return bar;}
     private int sweep(View view, int depth) {
         if (depth > MAX_DEPTH || view == null) return 0;
         int found = 0;
@@ -450,7 +453,7 @@ final class GlassSurfaces {
      * 继续往上就是 0,0-2000,3200 的全屏根容器——把根容器透明化
      * 会让整个窗口露出黑底，那样比白槽更糟。
      */
-    private void clearSlot(View bar) {
+    private void clearSlot(View bar){
         // ① 底栏自身与两个已知子层：无条件透明化。
         for (View v : new View[]{bar, child(bar, BOTTOM_SCALE), child(bar, BOTTOM_BAR)}) {
             if (v == null || !cleared.add(v)) continue;
@@ -514,7 +517,7 @@ final class GlassSurfaces {
      * 这里从 pager 自己出发，把每一层父容器的 bottom 约束与高度统一放开，
      * 内容才能真正铺到屏幕最后一行像素，底栏才有东西可以透出来。
      */
-    private boolean lift(View bar, boolean floating) {
+    private boolean lift(View bar, boolean floating){
         boolean ok = false;
         try {
             float density = bar.getResources().getDisplayMetrics().density;
@@ -525,10 +528,9 @@ final class GlassSurfaces {
             ViewGroup.LayoutParams lp = bar.getLayoutParams();
             if (lp instanceof ViewGroup.MarginLayoutParams) {
                 ViewGroup.MarginLayoutParams mp = (ViewGroup.MarginLayoutParams) lp;
-                mp.leftMargin = margin;
-                mp.rightMargin = margin;
-                mp.bottomMargin = bottom;
-                bar.setLayoutParams(mp);
+                if(mp.leftMargin!=margin||mp.rightMargin!=margin||mp.bottomMargin!=bottom){
+                    mp.leftMargin = margin;mp.rightMargin = margin;mp.bottomMargin = bottom;bar.setLayoutParams(mp);
+                }
             }
             // 彻底关闭原生投影。
             // 半透明玻璃 View 上的 setElevation 会：① 把胶囊内部熏脏；
@@ -748,13 +750,16 @@ final class GlassSurfaces {
     }
     private boolean pillDispatchHooked;
     private final java.util.Map<View,PillState> pills=new WeakHashMap<>();
-    private void installSwipe(final View bar) {
+    private void installSwipe(final View bar){
         if(!swiped.add(bar))return;
         pills.put(bar,new PillState());
         bar.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->refreshPill(v));
         ViewGroup tabs=tabTrack(bar);
         if(tabs!=null)tabs.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->refreshPill(bar));
         bar.getViewTreeObserver().addOnWindowFocusChangeListener(focus->{if(focus)refreshPill(bar);else resetLiquidPress(bar,pills.get(bar),"focus-lost");});
+        installSwipeHook();
+    }
+    private void installSwipeHook() {
         if(pillDispatchHooked)return;
         try {
             Method dispatch=ViewGroup.class.getDeclaredMethod("dispatchTouchEvent",android.view.MotionEvent.class);
@@ -1193,7 +1198,7 @@ final class GlassSurfaces {
      * Drawable 直接覆盖掉。所以玻璃的模糊、着色、高光全部改到
      * dispatchDraw 前置绘制里完成，宿主再怎么 setBackground 也盖不到。
      */
-    private void paint(View bar, boolean floating) {
+    private void paint(View bar, boolean floating){
         try {
             float density = bar.getResources().getDisplayMetrics().density;
             final int corner = dp(liveInt("glass_bar_corner"), density);
@@ -1271,7 +1276,7 @@ final class GlassSurfaces {
         }
     }
 
-    private void installGlassDraw(final View bar, final int corner) {
+    private void installGlassDraw(final View bar, final int corner){
         if (!glassed.add(bar)) return;
         try {
             if (!(bar instanceof ViewGroup)) return;
@@ -1384,7 +1389,7 @@ final class GlassSurfaces {
             busy.set(Boolean.TRUE);
             try {
                 if (!barEnabled()||Boolean.TRUE.equals(suspendedBars.get(bar))) return;
-                if(!ScrollWorkGate.busy(bar)){updateBarStyleGeometry(bar);updateBarWidth(bar);fitTabTrack(bar);}
+                // Geometry is reconciled by onPreDraw before this draw.
                 updateLiquidClipping(bar);
                 // 每次绘制前清掉宿主塞回来的纯白/纯黑背景，保证边框与玻璃常驻。
                 int bgCleared = purgeHostBackgrounds();
@@ -1493,7 +1498,7 @@ final class GlassSurfaces {
         }
 
         /** 离屏录制 InterceptSelectViewPager 与底栏重叠区域并模糊。 */
-        private boolean drawBlurred(Canvas canvas, int w, int h, int blur, float density) {
+        private boolean drawBlurred(Canvas canvas, int w, int h, int blur, float density){
             // Keep the last committed frame until a complete dsv recording replaces it.
             // Tab/root/size validation prevents retained bookstore pixels crossing pages.
             if (Build.VERSION.SDK_INT < 31) {
@@ -1626,7 +1631,7 @@ final class GlassSurfaces {
         android.view.ViewTreeObserver observer;
         android.view.ViewTreeObserver.OnPreDrawListener listener;
     }
-    private void watchRedraw(final View bar) {
+    private void watchRedraw(final View bar){
         watched.add(bar);
         bindBarRedraw(bar);
     }
@@ -1677,7 +1682,7 @@ final class GlassSurfaces {
             background=v.getBackground();outline=v.getOutlineProvider();clipped=v.getClipToOutline();elevation=v.getElevation();z=v.getTranslationZ();
         }
     }
-    private void rememberBarTree(View v,int depth) {
+    private void rememberBarTree(View v,int depth){
         if(v==null||depth>12||v instanceof GlassBackdropView||v instanceof GlassPillView)return;
         originalBars.computeIfAbsent(v,OriginalBarState::new);
         if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++)rememberBarTree(g.getChildAt(i),depth+1);}
@@ -1695,7 +1700,7 @@ final class GlassSurfaces {
         }finally{restoringBar=false;}}
         if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++)restoreBarTree(g.getChildAt(i),depth+1);}
     }
-    private void fitTabTrack(View bar) {
+    private void fitTabTrack(View bar){
         if(!barEnabled())return;
         ViewGroup track=tabTrack(bar);if(track==null)return;
         fitVisibleTabs(bar,track);
@@ -1782,7 +1787,7 @@ final class GlassSurfaces {
     }
 
     /** Recompute from the current parent, never from a previously shortened layout. */
-    private void updateBarWidth(View bar) {
+    private void updateBarWidth(View bar){
         if (!barEnabled() || !(bar.getLayoutParams() instanceof ViewGroup.MarginLayoutParams)
                 || !(bar.getParent() instanceof View)) return;
         View parent = (View) bar.getParent();
@@ -1941,7 +1946,7 @@ final class GlassSurfaces {
                     Object manager = activity.getClass().getMethod("getSupportFragmentManager").invoke(activity);
                     java.util.List<?> fragments = (java.util.List<?>) manager.getClass()
                             .getMethod("getFragments").invoke(manager);
-                    View bar = find(decor, BOTTOM, 0);
+                    View bar = cachedBar(decor);
                     for (Object fragment : fragments) processTargetFragment(fragment, bar);
                 } catch (Throwable error) {
                     if (!pageWatchErrorLogged) {

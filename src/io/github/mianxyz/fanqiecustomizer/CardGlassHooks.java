@@ -69,7 +69,7 @@ final class CardGlassHooks {
     interface Setup {void run() throws Throwable;}
     private void isolated(String target,Setup setup){try{setup.run();report("card hook-installed "+target);}catch(Throwable e){failure(target,e);}}
     private void failure(String target,Throwable e){while(e instanceof InvocationTargetException&&e.getCause()!=null)e=e.getCause();report("card error "+target+" "+e.getClass().getName()+": "+String.valueOf(e.getMessage()));}
-    private void once(String text){synchronized(seen){if(!seen.add(text))return;}report(text);}
+    private void once(String text){if(!GlobalGlassSurfaces.debugEnabled())return;synchronized(seen){if(!seen.add(text))return;}report(text);}
     private SquareGlassHooks square;
     private boolean bitmapPainterSymbols(){return HostSymbols.requireCapability("CardGlassHooks.bitmapPainter",new String[]{"androidx.compose.ui.graphics.painter.a","androidx.compose.ui.graphics.g1","androidx.compose.ui.graphics.j"},new String[]{"androidx.compose.ui.graphics.j#a(Landroidx/compose/ui/graphics/g1;)Landroid/graphics/Bitmap;"},new String[]{"androidx.compose.ui.graphics.painter.a#f:Landroidx/compose/ui/graphics/g1;"},new String[]{});}
 
@@ -222,6 +222,7 @@ final class CardGlassHooks {
             card.painter=new WeakReference<>(painter);card.observedBitmap=new WeakReference<>(actual);card.observedGeneration=generation;
         }
         if(card.drawable.get()==drawable&&card.bitmap.get()==actual&&card.source!=null&&card.generation==generation&&(actual!=null||now-card.stamp<500))return;
+        if(card.rejection.skip(actual,generation,drawable,now))return;
         extracting.set(true);
         try{
             Bitmap source;
@@ -238,11 +239,13 @@ final class CardGlassHooks {
                 source=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);Rect old=new Rect(drawable.getBounds());
                 try{drawable.setBounds(0,0,w,h);drawable.draw(new Canvas(source));}finally{drawable.setBounds(old);}
             }
-            int average=bottomAverage(source);
+            int[] pixels=new int[source.getWidth()*source.getHeight()];source.getPixels(pixels,0,source.getWidth(),0,0,source.getWidth(),source.getHeight());
+            int average=bottomAveragePixels(pixels,source.getWidth(),source.getHeight());
             // Uniform white/transparent loader placeholders must never replace a ready cover.
-            // Do not cache rejection: the same mutable Drawable can later receive real pixels.
-            if(placeholder(source)){report("card placeholder id="+System.identityHashCode(card)+" painter="+name+" bottomAvgARGB="+argb(average));source.recycle();return;}
-            if(card.dynamicCover){long hash=1469598103934665603L;for(int y=0;y<source.getHeight();y++)for(int x=0;x<source.getWidth();x++){hash^=source.getPixel(x,y);hash*=1099511628211L;}card.identityResolved=true;card.resolvedDay="dynamic-content:"+source.getWidth()+"x"+source.getHeight()+":"+Long.toHexString(hash);card.resolvedNight=card.resolvedDay;event(card,"dynamic-source","identity=content-digest painter="+name);}
+            // Bitmap generations invalidate rejection immediately; mutable wrappers retry after 180ms.
+            if(placeholderPixels(pixels)){card.rejection.reject(actual,generation,drawable,now);report("card placeholder id="+System.identityHashCode(card)+" painter="+name+" bottomAvgARGB="+argb(average));source.recycle();return;}
+            card.rejection.clear();
+            if(card.dynamicCover){long hash=1469598103934665603L;for(int pixel:pixels){hash^=pixel;hash*=1099511628211L;}card.identityResolved=true;card.resolvedDay="dynamic-content:"+source.getWidth()+"x"+source.getHeight()+":"+Long.toHexString(hash);card.resolvedNight=card.resolvedDay;event(card,"dynamic-source","identity=content-digest painter="+name);}
             card.bottomAvgARGB=average;card.sourcePainterClass=name;
             String key=activeKey(card);card.sourceKey=key;if(key!=null)sourceCache.put(key,new CachedSource(source,average,name));
             report("card source-pixels id="+System.identityHashCode(card)+" event="+(card.sourceEvent+1)+" painter="+name+" src="+source.getWidth()+"x"+source.getHeight()+" bottomAvgARGB="+argb(average));
@@ -279,6 +282,8 @@ final class CardGlassHooks {
         if(!card.diagnosed){synchronized(this){if(!card.diagnosed){card.diagnosed=true;if(diagnosticCards<3){diagnosticCards++;report("card diag id="+System.identityHashCode(card)+" painter="+card.sourcePainterClass+" src="+card.source.getWidth()+"x"+card.source.getHeight()+" bottomAvgARGB="+argb(card.bottomAvgARGB)+" rootBgSkipped="+card.rootBgSkipped+" hw="+card.lastHardware+" textBox="+card.textWidth+"x"+card.textHeight);}}}}
     }
     private static String argb(int color){return String.format(java.util.Locale.ROOT,"#%08X",color);}
+    static int bottomAveragePixels(int[] pixels,int width,int height){long a=0,r=0,g=0,b=0,n=0;for(int i=(int)(height*.65f)*width;i<pixels.length;i++){int p=pixels[i];a+=p>>>24;r+=(p>>>16)&255;g+=(p>>>8)&255;b+=p&255;n++;}return n==0?0:((int)(a/n)<<24)|((int)(r/n)<<16)|((int)(g/n)<<8)|(int)(b/n);}
+    static boolean placeholderPixels(int[] pixels){for(int p:pixels)if((p>>>24)>96&&(((p>>>16)&255)<248||((p>>>8)&255)<248||(p&255)<248))return false;return true;}
     private static int bottomAverage(Bitmap source){
         long a=0,r=0,g=0,b=0,n=0;int top=(int)(source.getHeight()*.65f);
         for(int y=top;y<source.getHeight();y++)for(int x=0;x<source.getWidth();x++){int p=source.getPixel(x,y);a+=p>>>24;r+=(p>>>16)&255;g+=(p>>>8)&255;b+=p&255;n++;}
@@ -314,7 +319,7 @@ final class CardGlassHooks {
     private static final class Frame {final Object node;final State state;Frame(Object n,State s){node=n;state=s;}}
     private void content(Object scope)throws Throwable{publicMethod("f0.d","A1").invoke(scope);}
     private static boolean enabled(){GlobalGlassSurfaces g=GlobalGlassSurfaces.instance();return Build.VERSION.SDK_INT>=31&&g!=null&&g.cardText();}
-    private void report(String message){synchronized(seen){if(!seen.add("log:"+message))return;}if(message.startsWith("tier=")){GlobalGlassSurfaces g=GlobalGlassSurfaces.instance();if(g!=null)g.logApplied(message);}else module.log(android.util.Log.INFO,"FanqieCustomizer","GlobalGlass "+message);}
+    private void report(String message){if(message==null||(!GlobalGlassSurfaces.debugEnabled()&&!message.contains("error")&&!message.contains("FAILED")&&!message.contains("Exception")))return;synchronized(seen){if(!seen.add("log:"+message))return;}if(message.startsWith("tier=")){GlobalGlassSurfaces g=GlobalGlassSurfaces.instance();if(g!=null)g.logApplied(message);}else AsyncLog.log(module,android.util.Log.INFO,"FanqieCustomizer","GlobalGlass "+message);}
     private static List<?> list(Object o){return o instanceof List?(List<?>)o:Collections.emptyList();}
     private static Object field(Object o,String n){if(o==null)return null;for(Class<?> c=o.getClass();c!=null;c=c.getSuperclass())try{Field f=c.getDeclaredField(HostSymbols.fieldName(c,n));f.setAccessible(true);return f.get(o);}catch(NoSuchFieldException ignored){}catch(ReflectiveOperationException ignored){return null;}return null;}
     private interface Drawing {void run(Object scope)throws Throwable;}
@@ -337,7 +342,7 @@ final class CardGlassHooks {
     private Canvas nativeCanvas(Object scope)throws Throwable{Object context=publicMethod("f0.h","U0").invoke(scope);Object cc=publicMethod("f0.a$b","a").invoke(context);return (Canvas)publicMethod("androidx.compose.ui.graphics.c","a",cls("androidx.compose.ui.graphics.g0")).invoke(null,cc);}
     private void bindBackground(Object node,Card card,String reason){if(node==null)return;Card old=bgNodes.get(node);if(card==null)bgNodes.remove(node);else bgNodes.put(node,card);if(card!=null&&old!=card)event(card,"rebind","reason="+reason+" node="+System.identityHashCode(node)+" root=mapped");}
     private List<Card> allCards(){List<Card> out=new ArrayList<>();for(Iterator<WeakReference<Card>> it=cardRefs.iterator();it.hasNext();){Card c=it.next().get();if(c==null)it.remove();else out.add(c);}return out;}
-    private void event(Card c,String name,String detail){if(!detail.equals(c.lastEvents.put(name,detail)))report("card "+name+" id="+System.identityHashCode(c)+" event="+(++c.eventSerial)+" rev="+c.revision+" "+detail);}
+    private void event(Card c,String name,String detail){if(!GlobalGlassSurfaces.debugEnabled())return;if(!detail.equals(c.lastEvents.put(name,detail)))report("card "+name+" id="+System.identityHashCode(c)+" event="+(++c.eventSerial)+" rev="+c.revision+" "+detail);}
     private String activeKey(Card c){return c.identityResolved?SourceRules.cacheKey(c.resolvedDay,c.resolvedNight,night()):null;}
     private void syncSource(Card c){String key=activeKey(c);if(c.source!=null&&!Objects.equals(c.sourceKey,key)){c.source=null;c.software=null;if(c.render!=null)c.render.discardDisplayList();c.render=null;bumpDraw(c);}if(key==null){event(c,"source","resolved=false ready="+(c.source!=null));return;}if(c.source!=null)return;CachedSource cached=sourceCache.get(key);if(cached==null||cached.bitmap.isRecycled()){event(c,"cache-miss","key="+Integer.toHexString(key.hashCode()));return;}c.source=cached.bitmap;c.sourceKey=key;c.bottomAvgARGB=cached.average;c.sourcePainterClass=cached.painter;c.software=null;c.render=null;bumpDraw(c);event(c,"cache-hit","key="+Integer.toHexString(key.hashCode())+" mode="+(night()?"night":"day"));invalidateAll();}
     static final class SourceCache<V>{final int limit;final LinkedHashMap<String,V> entries=new LinkedHashMap<>(16,.75f,true);SourceCache(int limit){this.limit=limit;}synchronized V get(String key){return key==null?null:entries.get(key);}synchronized void put(String key,V value){if(key==null||value==null)return;entries.put(key,value);while(entries.size()>limit){Iterator<String> it=entries.keySet().iterator();it.next();it.remove();}}synchronized int size(){return entries.size();}}
@@ -345,7 +350,25 @@ final class CardGlassHooks {
     private static final class CachedSource{final Bitmap bitmap;final int average;final String painter;CachedSource(Bitmap b,int a,String p){bitmap=b;average=a;painter=p;}}
     private Object exactField(Object o,String owner,String name)throws Throwable{Field f=declaredField(owner,name);f.setAccessible(true);return f.get(o);}
     private void clearSource(Card c,String reason){if(c.source==null)return;once("card source-clear reason="+reason+" card="+System.identityHashCode(c)+" event="+(++c.sourceEvent));c.source=null;c.software=null;bumpDraw(c);if(c.render!=null)c.render.discardDisplayList();c.render=null;invalidateAll();}
-    private static final class Card {int eventSerial;String sourceKey,resolvedDay,resolvedNight;boolean identityResolved,dynamicCover;float coverWidth,dynamicArea;final Map<String,String> lastEvents=new HashMap<>();Object drawVersion;int revision,sourceEvent,coverEvent,observedGeneration,bottomAvgARGB;boolean rootBgSkipped,diagnosed,lastHardware,textDrawn;float textWidth,textHeight;String painterClass="none",sourcePainterClass="none";WeakReference<Object> painter=new WeakReference<>(null);WeakReference<Bitmap> observedBitmap=new WeakReference<>(null);Bitmap software;int sw,sh;final SourceRules.Identity coverIdentity=new SourceRules.Identity();WeakReference<Object> textNode=new WeakReference<>(null),coverNode=new WeakReference<>(null);CachedAction textAction,coverAction;WeakReference<View> owner=new WeakReference<>(null);int generation;WeakReference<Drawable> drawable=new WeakReference<>(null);WeakReference<Bitmap> bitmap=new WeakReference<>(null);Bitmap source;RenderNode render;int rw,rh;long stamp;}
+    /** Per-card rejection only: never publishes placeholder pixels to sourceCache. */
+    static final class CaptureRejection {
+        static final long COOLDOWN_MS=180;
+        private WeakReference<Object> rejectedBitmap=new WeakReference<>(null),rejectedDrawable=new WeakReference<>(null);
+        private int rejectedGeneration;
+        private long lastRejectStamp;
+        private boolean rejected;
+        boolean skip(Object actual,int generation,Object drawable,long now){
+            if(!rejected)return false;
+            if(actual!=null)return actual==rejectedBitmap.get()&&generation==rejectedGeneration;
+            return rejectedBitmap.get()==null&&drawable!=null&&drawable==rejectedDrawable.get()&&now>=lastRejectStamp&&now-lastRejectStamp<COOLDOWN_MS;
+        }
+        void reject(Object actual,int generation,Object drawable,long now){
+            rejectedBitmap=new WeakReference<>(actual);rejectedDrawable=new WeakReference<>(actual==null?drawable:null);
+            rejectedGeneration=generation;lastRejectStamp=now;rejected=true;
+        }
+        void clear(){rejected=false;rejectedBitmap.clear();rejectedDrawable.clear();}
+    }
+    private static final class Card {final CaptureRejection rejection=new CaptureRejection();int eventSerial;String sourceKey,resolvedDay,resolvedNight;boolean identityResolved,dynamicCover;float coverWidth,dynamicArea;final Map<String,String> lastEvents=new HashMap<>();Object drawVersion;int revision,sourceEvent,coverEvent,observedGeneration,bottomAvgARGB;boolean rootBgSkipped,diagnosed,lastHardware,textDrawn;float textWidth,textHeight;String painterClass="none",sourcePainterClass="none";WeakReference<Object> painter=new WeakReference<>(null);WeakReference<Bitmap> observedBitmap=new WeakReference<>(null);Bitmap software;int sw,sh;final SourceRules.Identity coverIdentity=new SourceRules.Identity();WeakReference<Object> textNode=new WeakReference<>(null),coverNode=new WeakReference<>(null);CachedAction textAction,coverAction;WeakReference<View> owner=new WeakReference<>(null);int generation;WeakReference<Drawable> drawable=new WeakReference<>(null);WeakReference<Bitmap> bitmap=new WeakReference<>(null);Bitmap source;RenderNode render;int rw,rh;long stamp;}
     /** Weak identity keys: host Modifier.equals compares values and must not merge cards. */
     private static final class IdentityWeakMap<V>{
         final ReferenceQueue<Object> queue=new ReferenceQueue<>();final Map<Key,V> values=new HashMap<>();

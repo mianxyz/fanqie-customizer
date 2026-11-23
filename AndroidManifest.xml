@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.mianxyz.fanqiecustomizer" android:versionCode="100" android:versionName="6.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.mianxyz.fanqiecustomizer" android:versionCode="107" android:versionName="6.1">
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35" />
     <queries><package android:name="com.dragon.read" /><package android:name="com.dragon.read.oversea.gp" /></queries>
     <application android:name=".SettingsApp" android:label="Pulp" android:icon="@mipmap/ic_launcher" android:description="@string/module_description" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:supportsRtl="true">

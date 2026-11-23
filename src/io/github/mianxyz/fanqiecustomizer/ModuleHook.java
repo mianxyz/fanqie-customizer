@@ -378,7 +378,7 @@ public final class ModuleHook extends XposedModule {
         Integer v=ints.get(key);
         return v!=null?v:Rules.intDefault(key);
     }
-    private void logMessage(String message){log(Log.INFO,"FanqieCustomizer",message);}
+    private void logMessage(String message){AsyncLog.log(this,Log.INFO,"FanqieCustomizer",message);}
     private void logOnce(String message){if(on("debug")&&logged.add(message))logMessage(message);}
 
     private void installVip(ClassLoader loader) {

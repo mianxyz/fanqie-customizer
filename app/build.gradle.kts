@@ -20,8 +20,8 @@ android {
         applicationId = "io.github.mianxyz.fanqiecustomizer"
         minSdk = 28
         targetSdk = 35
-        versionCode = 100
-        versionName = "6.0"
+        versionCode = 107
+        versionName = "6.1"
         testInstrumentationRunner = "io.github.mianxyz.fanqiecustomizer.ConfigBridgeInstrumentation"
     }
 

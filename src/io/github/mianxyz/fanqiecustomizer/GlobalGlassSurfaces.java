@@ -51,6 +51,7 @@ final class GlobalGlassSurfaces {
     static GlobalGlassSurfaces instance(){return singleton;}
     boolean enabled(){return Build.VERSION.SDK_INT>=31&&host.on("enabled")&&host.on("glass_global_enabled");}
     static boolean panels(){GlobalGlassSurfaces g=singleton;return g!=null&&g.enabled()&&g.host.on("glass_global_panels");}
+    static boolean debugEnabled(){GlobalGlassSurfaces g=singleton;return g!=null&&g.host.on("debug");}
     boolean cardText(){return enabled()&&host.on("glass_global_card_text");}
     boolean rankCover(){return panels()&&host.on("glass_global_rank_cover");}
     void logIssue(String text){if(logged.add("issue:"+text))host.log("GlobalGlass skipped: "+text);}
@@ -88,6 +89,7 @@ final class GlobalGlassSurfaces {
     });}
     private final Set<View> discoveryRoots=Collections.newSetFromMap(new WeakHashMap<View,Boolean>());
     private final Map<Activity,Runnable> discoveries=new WeakHashMap<>();
+    private final Map<Activity,Long> lastDiscovery=new WeakHashMap<>();
     private void watchDiscovery(Activity a){
         View root=a.getWindow().getDecorView();if(!discoveryRoots.add(root))return;
         WeakReference<Activity> weak=new WeakReference<>(a);
@@ -101,8 +103,8 @@ final class GlobalGlassSurfaces {
         Runnable task=new Runnable(){public void run(){
             if(!resumed.containsKey(a)||a.isDestroyed()){discoveries.remove(a);return;}
             if(ScrollWorkGate.busy(a.getWindow().getDecorView())){main.postDelayed(this,200);return;}
-            discoveries.remove(a);if(enabled()||rankEqual())update(a);
-        }};discoveries.put(a,task);main.postDelayed(task,120);
+            discoveries.remove(a);lastDiscovery.put(a,SystemClock.uptimeMillis());if(enabled()||rankEqual())update(a);
+        }};discoveries.put(a,task);long previous=lastDiscovery.getOrDefault(a,0L);main.postDelayed(task,Math.max(120,400-(SystemClock.uptimeMillis()-previous)));
     }
     private void startTick(){if(!ticking){ticking=true;main.post(tick);}}
     private final Runnable tick=new Runnable(){public void run(){
@@ -213,7 +215,8 @@ final class GlobalGlassSurfaces {
             TopLayer state=nativeTopLayers.get(child);if(state==null){state=new TopLayer();nativeTopLayers.put(child,state);}
             state.headerTree=true;sampleNativeTop(child);
         }
-        for(View candidate:descendants(header.getRootView()))if(TopRules.candidate(idName(candidate))&&visibleSource(candidate)
+        List<View> topCandidates=descendants(header.getRootView());
+        for(View candidate:topCandidates)if(TopRules.candidate(idName(candidate))&&visibleSource(candidate)
                 &&("fa_".equals(idName(candidate))?hasId(candidate,"gat"):ancestorId(candidate,"fa_")))sampleTopBackdrop(candidate);
         if(header.getParent() instanceof ViewGroup){ViewGroup parent=(ViewGroup)header.getParent();
             for(int i=0;i<parent.getChildCount();i++){View sibling=parent.getChildAt(i);
@@ -358,8 +361,21 @@ final class GlobalGlassSurfaces {
     private static float dp(View v){return v.getResources().getDisplayMetrics().density;}
     private static float radius(View v,float fallback){Drawable d=v.getBackground();return d instanceof GradientDrawable?((GradientDrawable)d).getCornerRadius():fallback;}
     private static View first(View v){return v instanceof ViewGroup&&((ViewGroup)v).getChildCount()>0?((ViewGroup)v).getChildAt(0):null;}
-    private static View id(View root,String name){int n=root.getResources().getIdentifier(HostSymbols.resourceName(name),"id",root.getContext().getPackageName());return n==0?null:root.findViewById(n);}
-    private static String idName(View v){try{return v.getId()==View.NO_ID?"":HostSymbols.canonicalResource(v.getResources().getResourceEntryName(v.getId()));}catch(Throwable e){return "";}}
+    private static final Map<android.content.res.Resources,Map<String,Integer>> resourceIds=new WeakHashMap<>();
+    private static final Map<android.content.res.Resources,Map<Integer,String>> resourceNames=new WeakHashMap<>();
+    private static synchronized int resourceId(View root,String name){
+        Map<String,Integer> cache=resourceIds.computeIfAbsent(root.getResources(),key->new HashMap<>());
+        String key=root.getContext().getPackageName()+":"+HostSymbols.resourceName(name);Integer value=cache.get(key);
+        if(value==null){value=root.getResources().getIdentifier(HostSymbols.resourceName(name),"id",root.getContext().getPackageName());if(value!=0)cache.put(key,value);}return value;
+    }
+    private static View id(View root,String name){int n=resourceId(root,name);return n==0?null:root.findViewById(n);}
+    private static synchronized String idName(View v){
+        int id=v.getId();if(id==View.NO_ID||id==0)return "";
+        Map<Integer,String> cache=resourceNames.computeIfAbsent(v.getResources(),key->new HashMap<>());
+        String value=cache.get(id);if(value!=null)return value;
+        try{value=HostSymbols.canonicalResource(v.getResources().getResourceEntryName(id));}catch(Throwable e){value="";}
+        if(cache.size()<4096)cache.put(id,value);return value;
+    }
     private static boolean shelfAncestor(View v){
         for(ViewParent p=v.getParent();p instanceof View;p=p.getParent()){
             String name=p.getClass().getName().toLowerCase(Locale.ROOT),id=idName((View)p);

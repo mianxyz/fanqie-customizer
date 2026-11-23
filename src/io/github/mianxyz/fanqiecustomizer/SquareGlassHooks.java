@@ -17,7 +17,7 @@ final class SquareGlassHooks {
  Method publicMethod(String owner,String name,Class<?>... parameters)throws Exception{Class<?> type=cls(owner);return type.getMethod(HostSymbols.publicMethodName(type,name,parameters),parameters);}
  Field publicField(String owner,String name)throws Exception{Class<?> type=cls(owner);return type.getField(HostSymbols.publicFieldName(type,name));}
  Method method(String c,String n,Class<?>... p)throws Exception{Method m=cls(c).getDeclaredMethod(HostSymbols.methodName(cls(c),n),p);m.setAccessible(true);return m;}
- void log(String s){if(logs.add(s))module.log(android.util.Log.INFO,"FanqieCustomizer","GlobalGlass square "+s);}
+ void log(String s){if(logs.add(s))AsyncLog.log(module,android.util.Log.INFO,"FanqieCustomizer","GlobalGlass square "+s);}
  interface Setup{void run()throws Throwable;}
  void hook(String n,Setup s){try{s.run();}catch(Throwable e){log("hook-error "+n+" "+e);}}
  boolean bitmapPainterSymbols(){return HostSymbols.requireCapability("SquareGlassHooks.bitmapPainter",new String[]{"androidx.compose.ui.graphics.painter.a","androidx.compose.ui.graphics.g1","androidx.compose.ui.graphics.j"},new String[]{"androidx.compose.ui.graphics.j#a(Landroidx/compose/ui/graphics/g1;)Landroid/graphics/Bitmap;"},new String[]{"androidx.compose.ui.graphics.painter.a#f:Landroidx/compose/ui/graphics/g1;"},new String[]{});}

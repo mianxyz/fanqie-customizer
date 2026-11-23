@@ -67,7 +67,7 @@ public final class GlobalGlassIsolationTest {
             }
         }
         String gradle = Files.readString(Path.of("app/build.gradle.kts"));
-        check(gradle.contains("versionCode = 100") && gradle.contains("versionName = \"6.0\""), "6.0 / 100 version contract");
+        check(gradle.contains("versionCode = 107") && gradle.contains("versionName = \"6.1\""), "6.1 / 107 version contract");
         System.out.println("GlobalGlassIsolationTest passed (byte identity and conservative source boundaries only)");
     }
     private static String withoutComments(String text) {
